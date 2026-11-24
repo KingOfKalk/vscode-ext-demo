@@ -9,7 +9,8 @@ const targets = [
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    target: 'node26',
+    // VS Code 1.146.0, the minimum in `engines.vscode`, runs extensions on Node 24.22.1.
+    target: 'node24',
     external: ['vscode'],
   },
   {
