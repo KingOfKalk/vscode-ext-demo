@@ -20,10 +20,13 @@ describe('CounterStore', () => {
     expect(store.count).toBe(7);
   });
 
-  it.each([undefined, 'x', NaN, -1, 1.5, null])('starts at 0 for the saved value %j', (saved) => {
-    const store = new CounterStore(new FakeStorage(saved), () => 1);
-    expect(store.count).toBe(0);
-  });
+  it.each([undefined, 'x', NaN, -1, 1.5, null, 1e300, 2 ** 53, Infinity])(
+    'starts at 0 for the saved value %j',
+    (saved) => {
+      const store = new CounterStore(new FakeStorage(saved), () => 1);
+      expect(store.count).toBe(0);
+    },
+  );
 
   it('adds the step read at the moment of the increment', async () => {
     let step = 1;

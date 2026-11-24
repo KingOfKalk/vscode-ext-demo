@@ -17,7 +17,7 @@ export class CounterStore {
     private readonly step: () => number,
   ) {
     const saved = storage.get(KEY);
-    this.value = typeof saved === 'number' && Number.isInteger(saved) && saved >= 0 ? saved : 0;
+    this.value = typeof saved === 'number' && Number.isSafeInteger(saved) && saved >= 0 ? saved : 0;
   }
 
   get count(): number {
