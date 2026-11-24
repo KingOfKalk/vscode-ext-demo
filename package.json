@@ -22,6 +22,7 @@
   ],
   "main": "./dist/extension.js",
   "files": [
+    "LICENSE",
     "dist/extension.js",
     "dist/webview.js",
     "media/"
@@ -34,12 +35,15 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "package": "node scripts/package.mjs",
+    "check:vsix": "node scripts/check-vsix.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@types/node": "26.6.7",
     "@types/vscode": "1.146.0",
+    "@vscode/vsce": "4.1.1",
     "esbuild": "0.28.2",
     "eslint": "10.15.0",
     "globals": "17.14.0",

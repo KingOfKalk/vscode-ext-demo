@@ -34,7 +34,7 @@ describe('package.json manifest', () => {
     expect(Object.keys(pkg.scripts).filter((s) => s.includes('publish'))).toEqual([]);
   });
 
-  it('packages only the bundles and media', () => {
-    expect(pkg.files).toEqual(['dist/extension.js', 'dist/webview.js', 'media/']);
+  it('packages only the license, the bundles and media', () => {
+    expect(pkg.files).toEqual(['LICENSE', 'dist/extension.js', 'dist/webview.js', 'media/']);
   });
 });
