@@ -49,7 +49,12 @@ export class WindowController {
 
   constructor(private readonly deps: WindowControllerDeps) {}
 
-  /** Shows the window, or reveals it if it is open. Never rejects. */
+  /**
+   * Shows the window, or reveals it if it is open. Failures while opening the window (closing old
+   * tabs, creating the panel) are logged or go to `onError`; they do not reject. `reveal()` of an
+   * open window is not guarded: if it throws, this call throws (or rejects, when the window opened
+   * while an earlier call was still preparing it).
+   */
   open(): Promise<void> {
     if (this.panel) {
       this.panel.reveal();

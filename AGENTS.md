@@ -48,11 +48,12 @@ After changing `.github/` (needs Docker): `docker run --rm -v "$PWD":/repo -w /r
 - `src/extension.ts`: extension host entry, `activate()`; wires store, window, status bar, sidebar and commands, returns `{ getCount }`. Bundled to `dist/extension.js` (CommonJS, `vscode` external).
 - `src/demoWindow.ts`, `statusBar.ts`, `actionsView.ts`: thin VS Code adapters (panel and tabs of the window, status bar item, sidebar tree). They only map VS Code objects to the pure modules; the rules live in those and are unit tested.
 - `src/counterStore.ts`: the only truth for the count (no `vscode` import). `windowController.ts`: the window's life cycle (one window, restore, close stale tabs) over the `PanelHandle` and `WindowHost` interfaces. `settings.ts`, `protocol.ts`, `windowHtml.ts`, `windowMessages.ts`, `counterActions.ts`, `labels.ts`, `nonce.ts`, `describe.ts`: pure helpers. `ids.ts`: every ID shared with `package.json`; no other file in `src/` spells one out.
-- `src/webview/main.ts`: code that runs in the webview. Bundled to `dist/webview.js` (IIFE).
+- `src/webview/main.ts`: code that runs in the webview. Bundled to `dist/webview.js` (IIFE). `src/webview/tsconfig.json` adds the DOM types for it, which the extension host code does not get. `npm run typecheck` therefore runs three configs: the root one (`src` and `tests` without the two webview folders), `src/webview` and `tests/webview`.
 - `media/`: files the webview and the extension load (icon, CSS).
 - `esbuild.mjs`: the bundles; unminified, with linked source maps. Maps stay out of the `.vsix`.
 - `scripts/`: `package.mjs`, `check-vsix.mjs`, `vscode.mjs` (downloads VS Code), `install-system-deps.sh` (packages VS Code and Xvfb need), `ci-summary.mjs` (CI job summaries), `dependabot-automerge.mjs` (auto-merge decision).
 - `tests/unit/`: Vitest tests. They must not import `vscode`. `manifest.test.ts` checks `package.json` (commands, settings, views) against `src/ids.ts`.
+- `tests/webview/`: Vitest tests of `src/webview/main.ts` in jsdom, with their own `tsconfig.json` (extends the webview one).
 - `tests/smoke/`: `run.mjs` installs the `.vsix` into an empty profile of the VS Code version in `engines.vscode` and runs `suite.ts` in its extension host; an error or warning of the extension in a log fails, too. `driver/` is the empty extension VS Code needs as test host. VS Code storage is in memory there: restoring the window and saving the count are for the live session.
 - `package.json` `files`: the only files in the `.vsix`: `dist/extension.js`, `dist/webview.js`, `media/`, `LICENSE`. `vsce` adds the README; other docs stay out.
 - `.github/`: workflows (`ci.yml`, `release-please.yml`, `dependabot-automerge.yml`), the `setup` action, `dependabot.yml`.
