@@ -40,6 +40,8 @@ Node 26 and npm. The dev container has both.
 | `npm run package`                 | build and write `vscode-ext-demo-<version>.vsix`                  |
 | `npm run check:vsix -- <file>`    | compare the `.vsix` contents with the expected file list          |
 
+After changing `.github/` (needs Docker): `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.12`
+
 ## Code map
 
 - `src/extension.ts`: extension host entry, `activate()`. Bundled to `dist/extension.js` (CommonJS, `vscode` external).
