@@ -55,12 +55,66 @@ export function parseUpdate(answer, version) {
   return { url, sha256: sha256hash };
 }
 
-/** @param {string} url */
-async function get(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
-  if (!response.ok || !response.body)
-    throw new Error(`GET ${url}: HTTP ${String(response.status)}`);
-  return response;
+/**
+ * The message of an error and of its causes, one per line. `fetch` hides the reason (ECONNREFUSED,
+ * a certificate, a timeout) in `cause`; its own message is only "fetch failed".
+ * @param {unknown} error
+ */
+export function describeFailure(error) {
+  const lines = [];
+  /** @type {unknown} */
+  let current = error;
+  for (let depth = 0; depth < 5 && current !== undefined; depth++) {
+    if (!(current instanceof Error)) {
+      lines.push(depth === 0 ? String(current) : `caused by: ${String(current)}`);
+      break;
+    }
+    if (depth === 0) {
+      lines.push(current.message);
+    } else {
+      const code = /** @type {{ code?: unknown }} */ (current).code;
+      const detail = [typeof code === 'string' ? code : '', current.message]
+        .filter((part) => part !== '')
+        .join(': ');
+      lines.push(`caused by: ${detail}`);
+    }
+    current = current.cause;
+  }
+  return lines.join('\n');
+}
+
+const RETRIES = 2;
+
+/**
+ * GET. A network error or a 5xx answer is tried again twice, after a pause that doubles; any other
+ * answer is final. The error names the URL and keeps the network error as its `cause`.
+ * @param {string} url
+ * @param {number} retryDelayMs the pause before the first retry
+ */
+async function get(url, retryDelayMs) {
+  for (let attempt = 0; ; attempt++) {
+    /** @type {Error} */
+    let failure;
+    let retry;
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
+      if (response.ok && response.body) return response;
+      await response.body?.cancel();
+      failure = new Error(`GET ${url}: HTTP ${String(response.status)}`);
+      retry = response.status >= 500;
+    } catch (error) {
+      failure = new Error(`GET ${url} failed`, {
+        cause: error,
+      });
+      retry = true;
+    }
+    if (!retry || attempt >= RETRIES) throw failure;
+    const pause = retryDelayMs * 2 ** attempt;
+    console.warn(
+      `${describeFailure(failure).replaceAll('\n', '; ')}; trying again in ${String(pause)} ms`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, pause));
+  }
 }
 
 /** @param {string} file */
@@ -75,19 +129,25 @@ async function sha256(file) {
  * the cache is used only if it has the right SHA-256.
  * @param {string} version
  * @param {string} cacheDir
+ * @param {{ platform?: string, arch?: string, retryDelayMs?: number }} [target] defaults: this
+ *   machine, a pause of 1 s before the first retry; the tests inject their own
  */
-export async function ensureVscode(version, cacheDir) {
-  const platform = updatePlatform(process.platform, process.arch);
+export async function ensureVscode(version, cacheDir, target = {}) {
+  const { platform: os = process.platform, arch = process.arch, retryDelayMs = 1000 } = target;
+  const platform = updatePlatform(os, arch);
   const dir = join(cacheDir, `vscode-${version}-${platform}`);
   if (existsSync(dir)) return dir;
 
   await mkdir(cacheDir, { recursive: true });
   const archive = `${dir}.tar.gz`;
-  const answer = await get(`${UPDATE_SERVICE}/api/versions/${version}/${platform}/stable`);
+  const answer = await get(
+    `${UPDATE_SERVICE}/api/versions/${version}/${platform}/stable`,
+    retryDelayMs,
+  );
   const update = parseUpdate(await answer.json(), version);
   if (!existsSync(archive) || (await sha256(archive)) !== update.sha256) {
     console.log(`Downloading ${update.url}`);
-    const { body } = await get(update.url);
+    const { body } = await get(update.url, retryDelayMs);
     const part = `${archive}.part`;
     await pipeline(Readable.fromWeb(/** @type {any} */ (body)), createWriteStream(part));
     const actual = await sha256(part);

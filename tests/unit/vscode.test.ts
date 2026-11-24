@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  describeFailure,
   ensureVscode,
   minimumVersion,
   parseUpdate,
@@ -13,7 +14,9 @@ import {
 
 const VERSION = '1.146.0';
 const URL = 'https://example.com/code.tar.gz';
-const PLATFORM = updatePlatform('linux', process.arch);
+const PLATFORM = 'linux-x64';
+// The platform is injected: the tests must run off Linux, too, and never wait for a real retry delay.
+const TARGET = { platform: 'linux', arch: 'x64', retryDelayMs: 0 };
 
 describe('minimumVersion', () => {
   it('takes the version of a caret range', () => {
@@ -88,6 +91,7 @@ describe('ensureVscode', () => {
     archive = readFileSync(join(dir, 'code.tar.gz'));
     fetched = [];
     vi.spyOn(console, 'log').mockReturnValue(undefined);
+    vi.spyOn(console, 'warn').mockReturnValue(undefined);
     serve(createHash('sha256').update(archive).digest('hex'));
   });
 
@@ -109,7 +113,7 @@ describe('ensureVscode', () => {
   }
 
   it('downloads, checks and unpacks', async () => {
-    expect(await ensureVscode(VERSION, cache)).toBe(join(cache, name));
+    expect(await ensureVscode(VERSION, cache, TARGET)).toBe(join(cache, name));
     expect(readFileSync(join(cache, name, 'code'), 'utf8')).toBe('binary');
     expect(readdirSync(cache).sort()).toEqual([name, `${name}.tar.gz`]);
     expect(fetched).toEqual([
@@ -120,14 +124,14 @@ describe('ensureVscode', () => {
 
   it('uses the unpacked directory without the network', async () => {
     mkdirSync(join(cache, name), { recursive: true });
-    expect(await ensureVscode(VERSION, cache)).toBe(join(cache, name));
+    expect(await ensureVscode(VERSION, cache, TARGET)).toBe(join(cache, name));
     expect(fetched).toEqual([]);
   });
 
   it('unpacks a cached archive with the right SHA-256 without a download', async () => {
     mkdirSync(cache);
     writeFileSync(join(cache, `${name}.tar.gz`), archive);
-    await ensureVscode(VERSION, cache);
+    await ensureVscode(VERSION, cache, TARGET);
     expect(fetched).not.toContain(URL);
     expect(readFileSync(join(cache, name, 'code'), 'utf8')).toBe('binary');
   });
@@ -135,19 +139,111 @@ describe('ensureVscode', () => {
   it('downloads again if the cached archive has another SHA-256', async () => {
     mkdirSync(cache);
     writeFileSync(join(cache, `${name}.tar.gz`), 'changed');
-    await ensureVscode(VERSION, cache);
+    await ensureVscode(VERSION, cache, TARGET);
     expect(fetched).toContain(URL);
     expect(readFileSync(join(cache, `${name}.tar.gz`))).toEqual(archive);
   });
 
   it('refuses a download with another SHA-256 and keeps nothing of it', async () => {
     serve('0'.repeat(64));
-    await expect(ensureVscode(VERSION, cache)).rejects.toThrow('SHA-256');
+    await expect(ensureVscode(VERSION, cache, TARGET)).rejects.toThrow('SHA-256');
     expect(readdirSync(cache)).toEqual([]);
   });
 
   it('fails on an HTTP error', async () => {
     vi.stubGlobal('fetch', () => Promise.resolve(new Response('no', { status: 404 })));
-    await expect(ensureVscode(VERSION, cache)).rejects.toThrow('HTTP 404');
+    await expect(ensureVscode(VERSION, cache, TARGET)).rejects.toThrow('HTTP 404');
+  });
+
+  it('does not retry an HTTP error below 500', async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response('no', { status: 404 })));
+    vi.stubGlobal('fetch', fetch);
+    await expect(ensureVscode(VERSION, cache, TARGET)).rejects.toThrow('HTTP 404');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a platform without a download', async () => {
+    await expect(
+      ensureVscode(VERSION, cache, { platform: 'darwin', arch: 'arm64' }),
+    ).rejects.toThrow('darwin-arm64');
+    expect(fetched).toEqual([]);
+  });
+
+  describe('with a flaky network', () => {
+    const refused = () =>
+      new TypeError('fetch failed', {
+        cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:443'), {
+          code: 'ECONNREFUSED',
+        }),
+      });
+
+    /** The first calls fail the way `failures` says, then the normal answers follow. */
+    function flaky(failures: (() => Promise<Response>)[]) {
+      const normal = globalThis.fetch;
+      const fetch = vi.fn((url: string) => {
+        const failure = failures.shift();
+        return failure ? failure() : normal(url);
+      });
+      vi.stubGlobal('fetch', fetch);
+      return fetch;
+    }
+
+    it('tries a network error again, twice at most', async () => {
+      const fetch = flaky([() => Promise.reject(refused()), () => Promise.reject(refused())]);
+      expect(await ensureVscode(VERSION, cache, TARGET)).toBe(join(cache, name));
+      expect(fetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('tries a 5xx answer again', async () => {
+      const fetch = flaky([() => Promise.resolve(new Response('busy', { status: 503 }))]);
+      await ensureVscode(VERSION, cache, TARGET);
+      expect(fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('gives up after the third failure and names the URL and the cause', async () => {
+      const fetch = flaky([
+        () => Promise.reject(refused()),
+        () => Promise.reject(refused()),
+        () => Promise.reject(refused()),
+      ]);
+      const error = await ensureVscode(VERSION, cache, TARGET).catch((caught: unknown) => caught);
+      expect(fetch).toHaveBeenCalledTimes(3);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        `GET https://update.code.visualstudio.com/api/versions/${VERSION}/${PLATFORM}/stable failed`,
+      );
+      expect(describeFailure(error)).toContain('ECONNREFUSED');
+      expect(describeFailure(error)).toContain('connect ECONNREFUSED 127.0.0.1:443');
+    });
+
+    it('gives up after the third 5xx answer', async () => {
+      const fetch = vi.fn(() => Promise.resolve(new Response('busy', { status: 502 })));
+      vi.stubGlobal('fetch', fetch);
+      await expect(ensureVscode(VERSION, cache, TARGET)).rejects.toThrow('HTTP 502');
+      expect(fetch).toHaveBeenCalledTimes(3);
+    });
+  });
+});
+
+describe('describeFailure', () => {
+  it('gives the message of a plain error', () => {
+    expect(describeFailure(new Error('broken'))).toBe('broken');
+  });
+
+  it('follows the causes and shows their codes', () => {
+    const inner = Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
+    const outer = new Error('GET https://x.example: fetch failed', { cause: inner });
+    expect(describeFailure(outer)).toBe(
+      'GET https://x.example: fetch failed\ncaused by: ECONNREFUSED: refused',
+    );
+  });
+
+  it('copes with a cause without message and with values that are no errors', () => {
+    const aggregate = Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' });
+    expect(describeFailure(new Error('a', { cause: aggregate }))).toBe(
+      'a\ncaused by: ECONNREFUSED',
+    );
+    expect(describeFailure('text')).toBe('text');
+    expect(describeFailure(new Error('a', { cause: 'why' }))).toBe('a\ncaused by: why');
   });
 });
