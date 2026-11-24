@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { ensureVscode, minimumVersion } from '../../scripts/vscode.mjs';
+import { describeFailure, ensureVscode, minimumVersion } from '../../scripts/vscode.mjs';
 import { hostProblems, LOGS, problems, readLog, toReport } from './results.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
@@ -32,13 +32,21 @@ const SETTINGS = {
   'workbench.startupEditor': 'none',
 };
 
-/** Variables of a surrounding VS Code or desktop would change how ours starts. */
-function cleanEnv() {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([name]) => !/^(VSCODE|ELECTRON|WAYLAND|XDG_SESSION)_/.test(name),
-    ),
-  );
+/** Variables that would let a surrounding VS Code, desktop or user setup change how ours starts. */
+const DROPPED =
+  /^(VSCODE|ELECTRON|WAYLAND|XDG_SESSION)_|^(NODE_OPTIONS|XDG_CONFIG_HOME|XDG_CACHE_HOME|XDG_DATA_HOME)$/;
+
+/**
+ * The environment for VS Code: HOME is in the run directory, so nothing of the real home (config,
+ * caches, credentials) is read or written.
+ * @param {string} home
+ * @returns {NodeJS.ProcessEnv}
+ */
+function cleanEnv(home) {
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !DROPPED.test(name))),
+    HOME: home,
+  };
 }
 
 /**
@@ -87,6 +95,20 @@ function killAll() {
     } catch {
       // Already gone.
     }
+  }
+}
+
+/**
+ * Ends VS Code and Xvfb with everything in their process groups, then removes the run directory.
+ * A rest that cannot be removed is a warning: the tests have passed.
+ * @param {string} dir
+ */
+function cleanUp(dir) {
+  killAll();
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (error) {
+    console.warn(`Warning: could not remove ${dir}: ${describeFailure(error)}`);
   }
 }
 
@@ -171,9 +193,11 @@ async function main() {
   const profile = join(dir, 'profile');
   const extensions = join(dir, 'extensions');
   const workspace = join(dir, 'workspace');
+  const home = join(dir, 'home');
   const driver = join(dir, 'driver');
   const suite = join(driver, 'suite.js');
   mkdirSync(join(profile, 'User'), { recursive: true });
+  mkdirSync(home);
   mkdirSync(extensions);
   mkdirSync(workspace);
   writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify(SETTINGS));
@@ -202,7 +226,7 @@ async function main() {
   // The command line of VS Code. Not bin/code: it may ask, or call the one of another VS Code.
   const cli = join(vscode, 'resources/app/out/cli.js');
   run(executable, [cli, ...flags, '--install-extension', vsix], {
-    ...cleanEnv(),
+    ...cleanEnv(home),
     ELECTRON_RUN_AS_NODE: '1',
   });
 
@@ -221,7 +245,7 @@ async function main() {
       `--extensionTestsPath=${suite}`,
       workspace,
     ],
-    { ...cleanEnv(), DISPLAY: display },
+    { ...cleanEnv(home), DISPLAY: display },
   );
 
   const results = readResults(join(dir, 'results.json'));
@@ -261,7 +285,7 @@ async function main() {
     console.error(`\nThe smoke tests failed. All files: ${dir}`);
     return 1;
   }
-  rmSync(dir, { recursive: true });
+  cleanUp(dir);
   console.log('The smoke tests passed.');
   return 0;
 }
@@ -271,6 +295,6 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exi
 try {
   process.exit(await main());
 } catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+  console.error(describeFailure(error));
   process.exit(1);
 }
