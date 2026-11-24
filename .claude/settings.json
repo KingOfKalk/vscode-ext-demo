@@ -11,7 +11,10 @@
       "Bash(gh repo fork *)",
       "Bash(gh repo delete *)",
       "Bash(gh gist *)",
-      "Bash(gh api *gists*)"
+      "Bash(gh api *gists*)",
+      "Bash(gh repo create *--public*)",
+      "Bash(gh repo create *--internal*)",
+      "Bash(gh api *visibility*)"
     ]
   }
 }
