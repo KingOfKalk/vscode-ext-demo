@@ -52,6 +52,26 @@ describe('initWindow', () => {
     expect(text('message')).toBe('Hello from kingofkalk!');
   });
 
+  it('touches the message only when it changed, so a screen reader does not read it again', () => {
+    const { dom, document, send, text } = setup();
+    const message = document.getElementById('message');
+    if (!message) throw new Error('no message element');
+    const observer = new dom.window.MutationObserver(() => undefined);
+    observer.observe(message, { childList: true, characterData: true, subtree: true });
+
+    send({ type: 'state', count: 1, message: 'Hello' });
+    expect(observer.takeRecords().length).toBeGreaterThan(0);
+
+    send({ type: 'state', count: 2, message: 'Hello' });
+    expect(observer.takeRecords()).toHaveLength(0);
+    expect(text('count')).toBe('2');
+
+    send({ type: 'state', count: 2, message: 'Hi' });
+    expect(observer.takeRecords().length).toBeGreaterThan(0);
+    expect(text('message')).toBe('Hi');
+    observer.disconnect();
+  });
+
   it('does not count on click; it shows what state says', () => {
     const { send, text, click } = setup();
     send({ type: 'state', count: 3, message: 'm' });

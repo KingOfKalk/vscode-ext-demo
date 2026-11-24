@@ -37,7 +37,10 @@ export function initWindow(doc: Document, api: VsCodeApi): void {
     if (!state) {
       return;
     }
-    message.textContent = state.message;
+    // Only when it changed: a screen reader announces every rewrite of the text, even of the same.
+    if (message.textContent !== state.message) {
+      message.textContent = state.message;
+    }
     count.textContent = String(state.count);
   });
 
