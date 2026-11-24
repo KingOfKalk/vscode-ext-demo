@@ -117,6 +117,11 @@ jobs:
         run: npm run package
       - name: Check the .vsix
         run: npm run check:vsix -- "vscode-ext-demo-${TAG#v}.vsix"
+      # VS Code is downloaded, not taken from the cache.
+      - name: Install system packages
+        run: scripts/install-system-deps.sh
+      - name: Smoke tests
+        run: npm run test:smoke -- "vscode-ext-demo-${TAG#v}.vsix"
       # overwrite: a rerun uploads the same name again.
       - name: Upload the .vsix
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

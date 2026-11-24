@@ -90,6 +90,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    outputs:
+      artifact: ${{ steps.artifact.outputs.name }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,19 +114,19 @@ jobs:
             exit 1
           fi
           npm run check:vsix -- "${files[0]}" 2>&1 | tee "$RUNNER_TEMP/logs/check.log"
-      - name: Short SHA of the commit under test
-        id: sha
+      - name: Artifact name with the short SHA of the commit under test
+        id: artifact
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_SHA: ${{ github.sha }}
         run: |
           full="${PR_HEAD_SHA:-$PUSH_SHA}"
-          echo "short=${full:0:7}" >> "$GITHUB_OUTPUT"
+          echo "name=vsix-${full:0:7}" >> "$GITHUB_OUTPUT"
       - name: Upload the .vsix
         id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: vsix-${{ steps.sha.outputs.short }}
+          name: ${{ steps.artifact.outputs.name }}
           path: vscode-ext-demo-*.vsix
           if-no-files-found: error
           retention-days: 14
@@ -148,3 +150,53 @@ jobs:
             --step "Upload=$UPLOAD_OUTCOME=" \
             "${args[@]}" \
             >> "$GITHUB_STEP_SUMMARY"
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Install system packages
+        run: scripts/install-system-deps.sh
+      - name: Minimum VS Code version
+        id: vscode
+        run: |
+          version="$(jq -er '.engines.vscode | ltrimstr("^")' package.json)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Only the archive: scripts/vscode.mjs compares its SHA-256 before every use.
+      - name: Cache VS Code
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .vscode-test/*.tar.gz
+          key: vscode-${{ steps.vscode.outputs.version }}-${{ runner.os }}-${{ runner.arch }}
+      - name: Download the .vsix
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.build.outputs.artifact }}
+      - name: Smoke tests
+        id: smoke
+        run: |
+          shopt -s nullglob
+          files=(vscode-ext-demo-*.vsix)
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "expected exactly one .vsix, found ${#files[@]}" >&2
+            exit 1
+          fi
+          npm run test:smoke -- --report "$RUNNER_TEMP/smoke.json" "${files[0]}"
+      - name: Job summary
+        if: ${{ !cancelled() }}
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          VSCODE_VERSION: ${{ steps.vscode.outputs.version }}
+        run: |
+          node scripts/ci-summary.mjs test --title "Smoke tests in VS Code $VSCODE_VERSION" \
+            --report "$RUNNER_TEMP/smoke.json" --root "$GITHUB_WORKSPACE" \
+            --outcome "$SMOKE_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
