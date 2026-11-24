@@ -14,7 +14,8 @@
       "Bash(gh api *gists*)",
       "Bash(gh repo create *--public*)",
       "Bash(gh repo create *--internal*)",
-      "Bash(gh api *visibility*)"
+      "Bash(gh api *visibility*)",
+      "Bash(gh api *private=false*)"
     ]
   }
 }
