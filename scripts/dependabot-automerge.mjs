@@ -1,17 +1,29 @@
 // Decides whether a Dependabot pull request may be auto-merged. Used by
-// .github/workflows/dependabot-automerge.yml, with the JSON from dependabot/fetch-metadata.
+// .github/workflows/dependabot-automerge.yml.
 //
-// Env: UPDATED_DEPENDENCIES (output `updated-dependencies-json`), GITHUB_OUTPUT (gets `automerge`).
-// Prints the decision and its reasons as a notice. Exits 1 on metadata it cannot read.
+// Env:
+//   UPDATED_DEPENDENCIES  output `updated-dependencies-json` of dependabot/fetch-metadata
+//   COMMITS_FILE          commits of the pull request, as an array of pages of the GitHub API
+//   HEAD_SHA              head commit of the pull request the decision is for
+//   GITHUB_OUTPUT         gets `automerge`
+// Prints the decision and its reasons as a notice. Exits 1 on input it cannot read.
 // Only Node built-ins: the workflow installs nothing.
-import { appendFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-/**
- * Exact names. esbuild and typescript produce the shipped code; playwright-core drives the live
- * session, which CI does not run.
- */
-export const MANUAL_DEPENDENCIES = ['esbuild', 'typescript', 'playwright-core'];
+/** Exact names. Keep .github/dependabot.yml (`exclude-patterns`) in step; a test compares them. */
+export const MANUAL_DEPENDENCIES = [
+  // Produce the shipped code.
+  'esbuild',
+  'typescript',
+  // Drives the live session, which CI does not run.
+  'playwright-core',
+  // Not run by CI, and they get the App key or run next to a write token.
+  'actions/create-github-app-token',
+  'actions/download-artifact',
+  'dependabot/fetch-metadata',
+  'googleapis/release-please-action',
+];
 
 /**
  * As in the branch name `dependabot/<ecosystem>/…`. Everything else stays open, also
@@ -21,12 +33,16 @@ export const AUTOMERGE_ECOSYSTEMS = ['npm_and_yarn', 'github_actions'];
 
 const AUTOMERGE_UPDATE_TYPES = ['version-update:semver-minor', 'version-update:semver-patch'];
 
+const DEPENDABOT = 'dependabot[bot]';
+/** Commits made by GitHub, signed with its key: `web-flow`. */
+const COMMITTERS = ['web-flow', DEPENDABOT];
+
 /**
- * One dependency that may not be auto-merged keeps the whole pull request open.
+ * Why the dependencies may not be auto-merged. One of them keeps the whole pull request open.
  * @param {unknown} metadata
- * @returns {{ automerge: boolean, reasons: string[] }}
+ * @returns {string[]}
  */
-export function decide(metadata) {
+export function dependencyReasons(metadata) {
   if (!Array.isArray(metadata) || metadata.length === 0) {
     throw new Error('no updated dependencies in the metadata');
   }
@@ -49,6 +65,55 @@ export function decide(metadata) {
       );
     }
   }
+  return reasons;
+}
+
+/**
+ * Why the commits may not be auto-merged: all of them must come from Dependabot. The author of a
+ * commit is free text, so the signature must belong to GitHub, too.
+ * @param {unknown} pages
+ * @param {string} headSha
+ * @returns {string[]}
+ */
+export function commitReasons(pages, headSha) {
+  if (!headSha) throw new Error('no head commit');
+  if (!Array.isArray(pages) || !pages.every(Array.isArray) || pages.flat().length === 0) {
+    throw new Error('no commits in the commit list');
+  }
+  const commits = pages.flat();
+  /** @type {string[]} */
+  const reasons = [];
+  for (const commit of commits) {
+    if (typeof commit?.sha !== 'string') throw new Error('cannot read the commit list');
+    const name = `commit ${commit.sha.slice(0, 7)}`;
+    const author = commit.author?.login;
+    const committer = commit.committer?.login;
+    if (author !== DEPENDABOT) {
+      reasons.push(`${name} is by ${author ?? 'an unknown author'}, not by Dependabot`);
+    }
+    if (!COMMITTERS.includes(committer)) {
+      reasons.push(`${name} is committed by ${committer ?? 'an unknown user'}, not by GitHub`);
+    }
+    if (commit.commit?.verification?.verified !== true) {
+      reasons.push(`${name} has no verified signature`);
+    }
+  }
+  // The API lists at most 250 commits, and the branch may have moved since the event.
+  if (!commits.some((commit) => commit.sha === headSha)) {
+    const head = headSha.slice(0, 7);
+    reasons.push(`commit ${head}, the head of the pull request, is not in the commit list`);
+  }
+  return reasons;
+}
+
+/**
+ * @param {unknown} metadata
+ * @param {unknown} commitPages
+ * @param {string} headSha
+ * @returns {{ automerge: boolean, reasons: string[] }}
+ */
+export function decide(metadata, commitPages, headSha) {
+  const reasons = [...dependencyReasons(metadata), ...commitReasons(commitPages, headSha)];
   return { automerge: reasons.length === 0, reasons };
 }
 
@@ -61,10 +126,18 @@ export function escapeCommand(text) {
 }
 
 function main() {
-  const { UPDATED_DEPENDENCIES: json, GITHUB_OUTPUT: output } = process.env;
-  if (!json || !output) throw new Error('UPDATED_DEPENDENCIES and GITHUB_OUTPUT must be set');
+  const {
+    UPDATED_DEPENDENCIES: json,
+    COMMITS_FILE: commitsFile,
+    HEAD_SHA: headSha,
+    GITHUB_OUTPUT: output,
+  } = process.env;
+  if (!json || !commitsFile || !headSha || !output) {
+    throw new Error('UPDATED_DEPENDENCIES, COMMITS_FILE, HEAD_SHA and GITHUB_OUTPUT must be set');
+  }
   const metadata = JSON.parse(json);
-  const { automerge, reasons } = decide(metadata);
+  const commitPages = JSON.parse(readFileSync(commitsFile, 'utf8'));
+  const { automerge, reasons } = decide(metadata, commitPages, headSha);
   const names = metadata.map((/** @type {{ dependencyName: string }} */ d) => d.dependencyName);
   const line = automerge
     ? `Auto-merge after the required checks: ${names.join(', ')}`

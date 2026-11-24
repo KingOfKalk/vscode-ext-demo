@@ -5,6 +5,11 @@ on:
 
 permissions: {}
 
+# One run at a time per pull request, so an older decision cannot follow a newer one.
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 defaults:
   run:
     shell: bash -euo pipefail {0}
@@ -18,16 +23,28 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_URL: ${{ github.event.pull_request.html_url }}
     steps:
-      # Also checks that the first commit is a verified Dependabot commit.
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-      # The script of the base branch, never the one of the pull request.
+      # fetch-metadata looks only at the first commit. --slurp: an array of pages.
+      - name: List the commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh api --paginate --slurp "repos/$REPO/pulls/$NUMBER/commits?per_page=100" \
+            > "$RUNNER_TEMP/commits.json"
+      # The script comes from the base branch, so an update cannot change the decision script. This
+      # workflow file itself is the one of the pull request, as always with `pull_request`.
       - name: Check out the decision script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event.pull_request.base.ref }}
           sparse-checkout: scripts/dependabot-automerge.mjs
           sparse-checkout-cone-mode: false
           persist-credentials: false
@@ -35,7 +52,8 @@ jobs:
         id: decision
         env:
           UPDATED_DEPENDENCIES: ${{ steps.metadata.outputs.updated-dependencies-json }}
-        run: node scripts/dependabot-automerge.mjs
+        run: COMMITS_FILE="$RUNNER_TEMP/commits.json" node scripts/dependabot-automerge.mjs
+
       # App token instead of GITHUB_TOKEN, so the merge to main starts CI and the release workflow.
       # Dependabot runs read the Dependabot secrets of the same names. Only GitHub Actions updates
       # change workflow files; an empty permission input grants nothing.
@@ -49,10 +67,36 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-workflows: ${{ steps.metadata.outputs.package-ecosystem == 'github_actions' && 'write' || '' }}
-      # GitHub merges once the required checks of the ruleset pass.
+      # GitHub merges once the required checks of the ruleset pass. The head must still be the
+      # commit the decision was made for.
       - name: Enable auto-merge
         if: steps.decision.outputs.automerge == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge --auto --squash "$PR_URL"
+        run: gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
+
+      # An earlier run may have enabled auto-merge. `always()`: also when a step above failed.
+      - name: Look for enabled auto-merge
+        id: state
+        if: always() && steps.decision.outputs.automerge != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          enabled="$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          echo "Auto-merge enabled: $enabled"
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+      # `!= 'false'`: an unknown state counts as enabled.
+      - name: Create the App token to disable auto-merge
+        id: disable-token
+        if: always() && steps.decision.outputs.automerge != 'true' && steps.state.outputs.enabled != 'false'
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Disable auto-merge
+        if: always() && steps.decision.outputs.automerge != 'true' && steps.state.outputs.enabled != 'false'
+        env:
+          GH_TOKEN: ${{ steps.disable-token.outputs.token }}
+        run: gh pr merge --disable-auto "$PR_URL"

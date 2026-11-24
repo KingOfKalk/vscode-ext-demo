@@ -1,6 +1,11 @@
 name: Set up Node and dependencies
 description: Install the Node version from package.json engines and run npm ci.
 
+inputs:
+  cache:
+    description: "'true' restores and saves the npm download cache."
+    default: 'true'
+
 runs:
   using: composite
   steps:
@@ -8,7 +13,8 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version-file: package.json
-        cache: npm
+        cache: ${{ inputs.cache == 'true' && 'npm' || '' }}
+        package-manager-cache: false
     - name: Install dependencies
       shell: bash
       run: npm ci

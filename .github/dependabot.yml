@@ -55,6 +55,7 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    open-pull-requests-limit: 10
     commit-message:
       prefix: chore(deps)
     labels:
@@ -63,6 +64,11 @@ updates:
       github-actions:
         patterns:
           - '*'
+        exclude-patterns:
+          - actions/create-github-app-token
+          - actions/download-artifact
+          - dependabot/fetch-metadata
+          - googleapis/release-please-action
         update-types:
           - minor
           - patch
