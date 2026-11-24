@@ -44,12 +44,14 @@ After changing `.github/` (needs Docker): `docker run --rm -v "$PWD":/repo -w /r
 
 ## Code map
 
-- `src/extension.ts`: extension host entry, `activate()`. Bundled to `dist/extension.js` (CommonJS, `vscode` external).
+- `src/extension.ts`: extension host entry, `activate()`; wires store, window, status bar, sidebar and commands, returns `{ getCount }`. Bundled to `dist/extension.js` (CommonJS, `vscode` external).
+- `src/demoWindow.ts`, `statusBar.ts`, `actionsView.ts`: thin VS Code adapters (window panel and its restore, status bar item, sidebar tree). No logic of their own; they show the store.
+- `src/counterStore.ts`: the only truth for the count (no `vscode` import). `settings.ts`, `protocol.ts`, `windowHtml.ts`, `windowMessages.ts`, `counterActions.ts`, `labels.ts`, `nonce.ts`, `describe.ts`: pure helpers for them. `ids.ts`: every ID shared with `package.json`; no other file in `src/` spells one out.
 - `src/webview/main.ts`: code that runs in the webview. Bundled to `dist/webview.js` (IIFE).
 - `media/`: files the webview and the extension load (icon, CSS).
 - `esbuild.mjs`: the bundles; unminified, with linked source maps. Maps stay out of the `.vsix`.
 - `scripts/`: `package.mjs`, `check-vsix.mjs`, `ci-summary.mjs` (CI job summaries), `dependabot-automerge.mjs` (auto-merge decision).
-- `tests/unit/`: Vitest tests. They must not import `vscode`.
+- `tests/unit/`: Vitest tests. They must not import `vscode`. `manifest.test.ts` checks `package.json` (commands, settings, views) against `src/ids.ts`.
 - `package.json` `files`: the only files in the `.vsix`: `dist/extension.js`, `dist/webview.js`, `media/`, `LICENSE`. `vsce` adds the README; other docs stay out.
 - `.github/`: workflows (`ci.yml`, `release-please.yml`, `dependabot-automerge.yml`), the `setup` action, `dependabot.yml`.
 - `.devcontainer/`: dev container, with the lock file for its features.
