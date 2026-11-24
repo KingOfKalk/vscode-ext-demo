@@ -1,6 +1,9 @@
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   escapeCell,
   fence,
@@ -412,9 +415,72 @@ describe('renderVsixSection', () => {
 describe('command line', () => {
   const script = fileURLToPath(new URL('../../scripts/ci-summary.mjs', import.meta.url));
 
-  function run(...args: string[]) {
-    return spawnSync(process.execPath, [script, 'test', ...args], { encoding: 'utf8' });
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'ci-summary-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true });
+  });
+
+  function spawn(...args: string[]) {
+    return spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
   }
+
+  const run = (...args: string[]) => spawn('test', ...args);
+
+  it('has the title of the tests', () => {
+    const report = join(dir, 'report.json');
+    writeFileSync(report, JSON.stringify(passingReport));
+    const args = ['--report', report, '--outcome', 'success'];
+    expect(run(...args).stdout).toContain('## Unit tests\n');
+    const titled = run(...args, '--title', 'Smoke <tests>');
+    expect(titled.status).toBe(0);
+    expect(titled.stdout).toContain('## Smoke &lt;tests&gt;\n');
+    expect(titled.stdout).not.toContain('Unit tests');
+  });
+
+  it('has the title also without a test report', () => {
+    const result = run(
+      '--report',
+      join(dir, 'no.json'),
+      '--outcome',
+      'failure',
+      '--title',
+      'Smoke',
+    );
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('## Smoke\n\nResult: failure\n');
+  });
+
+  it('reads the logs of steps, also with = in the path', () => {
+    const log = join(dir, 'a=b.log');
+    writeFileSync(log, 'boom');
+    const result = spawn(
+      'steps',
+      '--title',
+      'T',
+      '--step',
+      `A=failure=${log}`,
+      '--step',
+      'B=skipped=',
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('## T\n');
+    expect(result.stdout).toContain('| B | skipped |');
+    expect(result.stdout).toContain('### A failed\n\n```text\nboom');
+  });
+
+  it.each([['steps', 'T'], ['steps', '--step'], ['steps', '--step', 'A='], ['nope']])(
+    'refuses bad arguments: %s %s %s',
+    (...args) => {
+      const result = spawn(...args);
+      expect(result.status).toBe(1);
+      expect(result.stderr).not.toBe('');
+    },
+  );
 
   it('prints the result also without a test report', () => {
     const result = run('--report', '/nonexistent/vitest.json', '--outcome', 'failure');

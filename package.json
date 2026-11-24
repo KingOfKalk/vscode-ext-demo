@@ -142,6 +142,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview && tsc --noEmit -p tests/webview",
     "test": "vitest run",
+    "test:smoke": "node tests/smoke/run.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
     "package": "node scripts/package.mjs",
     "check:vsix": "node scripts/check-vsix.mjs"

@@ -7,7 +7,7 @@
 // Usage:
 //   node scripts/ci-summary.mjs steps --title <title> [--step <name>=<outcome>=<logfile>]...
 //   node scripts/ci-summary.mjs build --title <title> [--step ...]... [--vsix <file>] [--artifact-url <url>]
-//   node scripts/ci-summary.mjs test --report <vitest.json> --outcome <outcome> [--root <dir>]
+//   node scripts/ci-summary.mjs test --report <vitest.json> --outcome <outcome> [--root <dir>] [--title <title>]
 // Exit 1 on bad usage or when a required input cannot be read, so a broken summary is not silent.
 import { spawnSync } from 'node:child_process';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 const LOG_LIMITS = { maxLines: 80, maxChars: 8000 };
 const TEST_LIMITS = { maxLines: 30, maxChars: 3000 };
 const MAX_LISTED_FAILURES = 20;
+const DEFAULT_TEST_TITLE = 'Unit tests';
 
 /**
  * @typedef {{ name: string, outcome: string, log: string }} StepResult
@@ -134,11 +135,12 @@ function cleanFailure(message, prefix) {
 }
 
 /**
+ * @param {string} title
  * @param {string} outcome of the test step
  * @param {string} note
  */
-function testHeading(outcome, note) {
-  return `## Unit tests\n\nResult: ${escapeCell(outcome)}${note}\n`;
+function testHeading(title, outcome, note) {
+  return `## ${escapeCell(title)}\n\nResult: ${escapeCell(outcome)}${note}\n`;
 }
 
 /**
@@ -146,8 +148,9 @@ function testHeading(outcome, note) {
  * @param {VitestReport} report
  * @param {string} root directory to cut from the front of file paths
  * @param {string} outcome of the test step; the report counts only failures inside test files
+ * @param {string} [title]
  */
-export function renderTestSummary(report, root, outcome) {
+export function renderTestSummary(report, root, outcome, title = DEFAULT_TEST_TITLE) {
   const prefix = root.endsWith('/') ? root : `${root}/`;
   /** @type {{ title: string, message: string }[]} */
   const failures = [];
@@ -170,7 +173,7 @@ export function renderTestSummary(report, root, outcome) {
   const end = Math.max(report.startTime, ...report.testResults.map((file) => file.endTime));
   // For example an unhandled error: Vitest exits 1, but its report has no trace of it.
   const outside = outcome === 'failure' && failures.length === 0;
-  let out = testHeading(outcome, outside ? ' (failed outside a test, see the log)' : '');
+  let out = testHeading(title, outcome, outside ? ' (failed outside a test, see the log)' : '');
   out += '\n| Result | Count |\n| --- | --- |\n';
   out += `| Passed | ${String(report.numPassedTests)} |\n`;
   out += `| Failed | ${String(report.numFailedTests)} |\n`;
@@ -305,15 +308,16 @@ function main(argv) {
     if (reportPath === undefined) throw new Error('missing --report');
     const outcome = options.get('outcome');
     if (!outcome) throw new Error('missing --outcome');
+    const title = options.get('title') ?? DEFAULT_TEST_TITLE;
     try {
       const report = /** @type {VitestReport} */ (JSON.parse(readFileSync(reportPath, 'utf8')));
       process.stdout.write(
-        renderTestSummary(report, options.get('root') ?? process.cwd(), outcome),
+        renderTestSummary(report, options.get('root') ?? process.cwd(), outcome, title),
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stdout.write(
-        `${testHeading(outcome, '')}\n_No test report: ${escapeCell(message)}_\n`,
+        `${testHeading(title, outcome, '')}\n_No test report: ${escapeCell(message)}_\n`,
       );
       console.error(`cannot read the test report ${reportPath}: ${message}`);
       return 1;
