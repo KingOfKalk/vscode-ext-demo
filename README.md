@@ -40,8 +40,9 @@ Needs Node 26. The dev container (`.devcontainer/`) has it.
 
 ```sh
 npm ci
-npm run check    # format, lint, types, unit tests, build
-npm run package  # writes vscode-ext-demo-<version>.vsix
+npm run check       # format, lint, types, unit tests, build
+npm run package     # writes vscode-ext-demo-<version>.vsix
+npm run test:smoke  # tests the .vsix in a real VS Code, see AGENTS.md
 ```
 
 Working on the code, as a person or an agent: see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

@@ -20,15 +20,15 @@ Guidance for any coding agent working in this repository. [CONTRIBUTING.md](CONT
 ## Definition of done
 
 1. `npm run check` passes.
-2. `npm run test:smoke` passes (added in part 2, [#3](https://github.com/KingOfKalk/vscode-ext-demo/issues/3)).
+2. `npm run test:smoke` passes.
 3. Anything visible or interactive: tried in a live VS Code session (added in part 3, [#4](https://github.com/KingOfKalk/vscode-ext-demo/issues/4)). The PR says in text what was tried and seen.
-4. Draft PR, CI green (`lint`, `test`, `build`), then mark it ready. The owner merges.
+4. Draft PR, CI green (`lint`, `test`, `build`, `smoke`), then mark it ready. The owner merges.
 
-Green unit tests do not prove that the extension starts.
+Green unit tests do not prove that the extension starts; the smoke tests do.
 
 ## Commands
 
-Node 26 and npm. The dev container has both.
+Node 26 and npm. The dev container has both. The smoke tests need Linux with `scripts/install-system-deps.sh` (Debian 13, Ubuntu 26.04; the dev container runs it) and keep the VS Code download in `.vscode-test/`, or in the directory `VSCODE_TEST_CACHE`.
 
 | Command                           | Does                                                              |
 | --------------------------------- | ----------------------------------------------------------------- |
@@ -37,6 +37,7 @@ Node 26 and npm. The dev container has both.
 | `npm run build` / `watch`         | bundle `dist/extension.js` and `dist/webview.js`                  |
 | `npm run format`                  | rewrite files with Prettier                                       |
 | `npm test`                        | unit tests (Vitest)                                               |
+| `npm run test:smoke [-- <vsix>]`  | packages (or takes the `.vsix`) and tests it in a real VS Code under Xvfb |
 | `npm run package`                 | build and write `vscode-ext-demo-<version>.vsix`                  |
 | `npm run check:vsix -- <file>`    | compare the `.vsix` contents with the expected file list          |
 
@@ -50,8 +51,9 @@ After changing `.github/` (needs Docker): `docker run --rm -v "$PWD":/repo -w /r
 - `src/webview/main.ts`: code that runs in the webview. Bundled to `dist/webview.js` (IIFE).
 - `media/`: files the webview and the extension load (icon, CSS).
 - `esbuild.mjs`: the bundles; unminified, with linked source maps. Maps stay out of the `.vsix`.
-- `scripts/`: `package.mjs`, `check-vsix.mjs`, `ci-summary.mjs` (CI job summaries), `dependabot-automerge.mjs` (auto-merge decision).
+- `scripts/`: `package.mjs`, `check-vsix.mjs`, `vscode.mjs` (downloads VS Code), `install-system-deps.sh` (packages VS Code and Xvfb need), `ci-summary.mjs` (CI job summaries), `dependabot-automerge.mjs` (auto-merge decision).
 - `tests/unit/`: Vitest tests. They must not import `vscode`. `manifest.test.ts` checks `package.json` (commands, settings, views) against `src/ids.ts`.
+- `tests/smoke/`: `run.mjs` installs the `.vsix` into an empty profile of the VS Code version in `engines.vscode` and runs `suite.ts` in its extension host; an error or warning of the extension in a log fails, too. `driver/` is the empty extension VS Code needs as test host. VS Code storage is in memory there: restoring the window and saving the count are for the live session.
 - `package.json` `files`: the only files in the `.vsix`: `dist/extension.js`, `dist/webview.js`, `media/`, `LICENSE`. `vsce` adds the README; other docs stay out.
 - `.github/`: workflows (`ci.yml`, `release-please.yml`, `dependabot-automerge.yml`), the `setup` action, `dependabot.yml`.
 - `.devcontainer/`: dev container, with the lock file for its features.
