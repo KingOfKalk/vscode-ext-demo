@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   escapeCell,
@@ -162,7 +164,7 @@ const passingReport = {
 
 describe('renderTestSummary', () => {
   it('shows counts and duration for a passing run', () => {
-    const out = renderTestSummary(passingReport, '/repo');
+    const out = renderTestSummary(passingReport, '/repo', 'success');
     expect(out).toContain('## Unit tests');
     expect(out).toContain('| Passed | 3 |');
     expect(out).toContain('| Failed | 0 |');
@@ -173,7 +175,7 @@ describe('renderTestSummary', () => {
   });
 
   it('counts todo tests as skipped', () => {
-    const out = renderTestSummary({ ...passingReport, numTodoTests: 2 }, '/repo');
+    const out = renderTestSummary({ ...passingReport, numTodoTests: 2 }, '/repo', 'success');
     expect(out).toContain('| Skipped | 3 |');
   });
 
@@ -199,7 +201,7 @@ describe('renderTestSummary', () => {
         },
       ],
     };
-    const out = renderTestSummary(report, '/repo');
+    const out = renderTestSummary(report, '/repo', 'failure');
     expect(out).toContain('| Failed | 1 |');
     expect(out).toContain('### Failed tests');
     expect(out).toContain('tests/a.test.ts');
@@ -222,7 +224,7 @@ describe('renderTestSummary', () => {
         },
       ],
     };
-    const out = renderTestSummary(report, '/repo');
+    const out = renderTestSummary(report, '/repo', 'failure');
     expect(out).toContain('tests/c.test.ts');
     expect(out).toContain('Cannot find module x');
   });
@@ -243,7 +245,7 @@ describe('renderTestSummary', () => {
         },
       ],
     };
-    expect(renderTestSummary(report, '/repo')).toContain('````text\n```\n# injected');
+    expect(renderTestSummary(report, '/repo', 'failure')).toContain('````text\n```\n# injected');
   });
 
   it('drops library stack frames and shortens paths', () => {
@@ -274,7 +276,7 @@ describe('renderTestSummary', () => {
         },
       ],
     };
-    const out = renderTestSummary(report, '/repo');
+    const out = renderTestSummary(report, '/repo', 'failure');
     expect(out).toContain('AssertionError: nope\n    at tests/a.test.ts:4:17\n```');
     expect(out).not.toContain('node_modules');
     expect(out).not.toContain('/repo/');
@@ -296,9 +298,62 @@ describe('renderTestSummary', () => {
         },
       ],
     };
-    const out = renderTestSummary(report, '/repo');
+    const out = renderTestSummary(report, '/repo', 'failure');
     expect(out).toContain('more lines not shown');
     expect(out.length).toBeLessThan(5000);
+  });
+
+  it('shows the result of the step', () => {
+    const passed = renderTestSummary(passingReport, '/repo', 'success');
+    expect(passed).toContain('Result: success\n');
+    expect(passed).not.toContain('failed outside a test');
+    expect(renderTestSummary(passingReport, '/repo', 'a|b')).toContain('Result: a\\|b\n');
+  });
+
+  it('says so when the step failed without a failed test', () => {
+    const out = renderTestSummary(passingReport, '/repo', 'failure');
+    expect(out).toContain('| Failed | 0 |');
+    expect(out).toContain('Result: failure (failed outside a test, see the log)\n');
+    expect(out).not.toContain('### Failed tests');
+  });
+
+  it('lists the error of a file next to its failed tests', () => {
+    const report = {
+      ...passingReport,
+      numFailedTests: 1,
+      testResults: [
+        {
+          name: '/repo/tests/a.test.ts',
+          status: 'failed',
+          startTime: 1010,
+          endTime: 1100,
+          message: 'afterAll broke',
+          assertionResults: [
+            { fullName: 't', status: 'failed', failureMessages: ['AssertionError: nope'] },
+          ],
+        },
+      ],
+    };
+    const out = renderTestSummary(report, '/repo', 'failure');
+    expect(out).toContain('#### tests/a.test.ts › t\n\n```text\nAssertionError: nope\n```');
+    expect(out).toContain('#### tests/a.test.ts\n\n```text\nafterAll broke\n```');
+    expect(out).toContain('Result: failure\n');
+    expect(out).not.toContain('failed outside a test');
+  });
+
+  it('does not list a failed file twice', () => {
+    const file = {
+      name: '/repo/tests/a.test.ts',
+      status: 'failed',
+      startTime: 1010,
+      endTime: 1100,
+      assertionResults: [{ fullName: 't', status: 'failed', failureMessages: ['nope'] }],
+    };
+    for (const message of [undefined, '']) {
+      const report = { ...passingReport, testResults: [{ ...file, message }] };
+      const out = renderTestSummary(report, '/repo', 'failure');
+      expect(out.match(/^#### /gm)).toHaveLength(1);
+    }
   });
 });
 
@@ -351,5 +406,26 @@ describe('renderVsixSection', () => {
       artifactUrl: 'javascript:alert(1)',
     });
     expect(out).not.toContain('javascript');
+  });
+});
+
+describe('command line', () => {
+  const script = fileURLToPath(new URL('../../scripts/ci-summary.mjs', import.meta.url));
+
+  function run(...args: string[]) {
+    return spawnSync(process.execPath, [script, 'test', ...args], { encoding: 'utf8' });
+  }
+
+  it('prints the result also without a test report', () => {
+    const result = run('--report', '/nonexistent/vitest.json', '--outcome', 'failure');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Result: failure\n');
+    expect(result.stdout).toContain('No test report');
+  });
+
+  it.each([[[]], [['--outcome', '']]])('refuses a missing outcome: %j', (args) => {
+    const result = run('--report', '/nonexistent/vitest.json', ...args);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('missing --outcome');
   });
 });

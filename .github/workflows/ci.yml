@@ -13,8 +13,8 @@ concurrency:
 
 defaults:
   run:
-    # bash with pipefail: a failing command in front of `tee` still fails the step.
-    shell: bash
+    # pipefail: a failing command in front of `tee` still fails the step.
+    shell: bash -euo pipefail {0}
 
 jobs:
   lint:
@@ -28,20 +28,22 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up
+        id: setup
         uses: ./.github/actions/setup
       - name: Create log directory
         run: mkdir -p "$RUNNER_TEMP/logs"
-      # Every check runs even if an earlier one failed; the job still fails.
+      # Every check runs even if an earlier one failed, but not after a failed setup.
+      # The job still fails.
       - name: Format
         id: format
         run: npm run format:check 2>&1 | tee "$RUNNER_TEMP/logs/format.log"
       - name: Lint
         id: lint
-        if: success() || failure()
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: npm run lint 2>&1 | tee "$RUNNER_TEMP/logs/lint.log"
       - name: Typecheck
         id: typecheck
-        if: success() || failure()
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: npm run typecheck 2>&1 | tee "$RUNNER_TEMP/logs/typecheck.log"
       - name: Job summary
         if: ${{ !cancelled() }}
@@ -72,10 +74,15 @@ jobs:
       # The JSON report feeds the job summary. Naming the reporters here also turns off Vitest's
       # built-in github-actions reporter, which would add a second, less detailed summary.
       - name: Unit tests
+        id: test
         run: npm test -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
       - name: Job summary
         if: ${{ !cancelled() }}
-        run: node scripts/ci-summary.mjs test --report "$RUNNER_TEMP/vitest.json" --root "$GITHUB_WORKSPACE" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          TEST_OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          node scripts/ci-summary.mjs test --report "$RUNNER_TEMP/vitest.json" --root "$GITHUB_WORKSPACE" \
+            --outcome "$TEST_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     needs: test
@@ -101,7 +108,7 @@ jobs:
           shopt -s nullglob
           files=(vscode-ext-demo-*.vsix)
           if [ "${#files[@]}" -ne 1 ]; then
-            echo "expected exactly one .vsix, found ${#files[@]}" >&2
+            echo "expected exactly one .vsix, found ${#files[@]}" | tee "$RUNNER_TEMP/logs/check.log" >&2
             exit 1
           fi
           npm run check:vsix -- "${files[0]}" 2>&1 | tee "$RUNNER_TEMP/logs/check.log"
