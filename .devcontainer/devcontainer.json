@@ -12,7 +12,7 @@
       "onAutoForward": "silent"
     }
   },
-  "postCreateCommand": "npm ci",
+  "postCreateCommand": "scripts/install-system-deps.sh && npm ci",
   "customizations": {
     "vscode": {
       "extensions": [
