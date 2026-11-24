@@ -1,0 +1,74 @@
+version: 2
+
+# `chore(deps)` is the prefix, not `include: scope`: the scope would be `deps-dev` for npm
+# development dependencies. Cooldowns do not delay security updates.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    # More than the default 5: updates left for review would otherwise block the auto-merged ones.
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore(deps)
+    labels:
+      - chore
+    ignore:
+      # Matches the minimum VS Code version (`engines.vscode`); both are raised by hand.
+      - dependency-name: '@types/vscode'
+    groups:
+      # One PR: required checks must be up to date with main, and Dependabot rebases PRs that are
+      # behind without a conflict only on its weekly run, so separate auto-merged PRs would wait.
+      # Excluded: the packages that scripts/dependabot-automerge.mjs leaves for review; one of them
+      # in the group would keep the whole group open.
+      dev-dependencies:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - esbuild
+          - typescript
+          - playwright-core
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: devcontainers
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore(deps)
+    labels:
+      - chore
+
+  # Actions are pinned by commit SHA with a `# vX.Y.Z` comment; Dependabot updates both.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      # Composite actions; `/` covers only .github/workflows.
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore(deps)
+    labels:
+      - chore
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - actions/create-github-app-token
+          - actions/download-artifact
+          - dependabot/fetch-metadata
+          - googleapis/release-please-action
+        update-types:
+          - minor
+          - patch
