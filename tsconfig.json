@@ -8,12 +8,11 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noEmit": true,
-    "allowJs": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node", "vscode"]
   },
-  "include": ["src", "tests", "esbuild.mjs", "eslint.config.mjs"]
+  "include": ["src", "tests"]
 }
