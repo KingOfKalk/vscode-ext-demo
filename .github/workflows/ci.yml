@@ -11,6 +11,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+defaults:
+  run:
+    # bash with pipefail: a failing command in front of `tee` still fails the step.
+    shell: bash
+
 jobs:
   lint:
     runs-on: ubuntu-26.04
@@ -24,17 +29,35 @@ jobs:
           persist-credentials: false
       - name: Set up
         uses: ./.github/actions/setup
+      - name: Create log directory
+        run: mkdir -p "$RUNNER_TEMP/logs"
       # Every check runs even if an earlier one failed; the job still fails.
       - name: Format
-        run: npm run format:check
+        id: format
+        run: npm run format:check 2>&1 | tee "$RUNNER_TEMP/logs/format.log"
       - name: Lint
+        id: lint
         if: success() || failure()
-        run: npm run lint
+        run: npm run lint 2>&1 | tee "$RUNNER_TEMP/logs/lint.log"
       - name: Typecheck
+        id: typecheck
         if: success() || failure()
-        run: npm run typecheck
+        run: npm run typecheck 2>&1 | tee "$RUNNER_TEMP/logs/typecheck.log"
+      - name: Job summary
+        if: ${{ !cancelled() }}
+        env:
+          FORMAT_OUTCOME: ${{ steps.format.outcome }}
+          LINT_OUTCOME: ${{ steps.lint.outcome }}
+          TYPECHECK_OUTCOME: ${{ steps.typecheck.outcome }}
+        run: |
+          node scripts/ci-summary.mjs steps --title "Lint" \
+            --step "Format=$FORMAT_OUTCOME=$RUNNER_TEMP/logs/format.log" \
+            --step "Lint=$LINT_OUTCOME=$RUNNER_TEMP/logs/lint.log" \
+            --step "Typecheck=$TYPECHECK_OUTCOME=$RUNNER_TEMP/logs/typecheck.log" \
+            >> "$GITHUB_STEP_SUMMARY"
 
   test:
+    needs: lint
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
@@ -46,10 +69,16 @@ jobs:
           persist-credentials: false
       - name: Set up
         uses: ./.github/actions/setup
+      # The JSON report feeds the job summary. Naming the reporters here also turns off Vitest's
+      # built-in github-actions reporter, which would add a second, less detailed summary.
       - name: Unit tests
-        run: npm test
+        run: npm test -- --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/vitest.json"
+      - name: Job summary
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-summary.mjs test --report "$RUNNER_TEMP/vitest.json" --root "$GITHUB_WORKSPACE" >> "$GITHUB_STEP_SUMMARY"
 
   build:
+    needs: test
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
@@ -61,31 +90,54 @@ jobs:
           persist-credentials: false
       - name: Set up
         uses: ./.github/actions/setup
+      - name: Create log directory
+        run: mkdir -p "$RUNNER_TEMP/logs"
       - name: Package
-        run: npm run package
+        id: package
+        run: npm run package 2>&1 | tee "$RUNNER_TEMP/logs/package.log"
       - name: Check the .vsix
+        id: check
         run: |
-          set -euo pipefail
           shopt -s nullglob
           files=(vscode-ext-demo-*.vsix)
           if [ "${#files[@]}" -ne 1 ]; then
             echo "expected exactly one .vsix, found ${#files[@]}" >&2
             exit 1
           fi
-          npm run check:vsix -- "${files[0]}"
+          npm run check:vsix -- "${files[0]}" 2>&1 | tee "$RUNNER_TEMP/logs/check.log"
       - name: Short SHA of the commit under test
         id: sha
         env:
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PUSH_SHA: ${{ github.sha }}
         run: |
-          set -euo pipefail
           full="${PR_HEAD_SHA:-$PUSH_SHA}"
           echo "short=${full:0:7}" >> "$GITHUB_OUTPUT"
       - name: Upload the .vsix
+        id: upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vsix-${{ steps.sha.outputs.short }}
           path: vscode-ext-demo-*.vsix
           if-no-files-found: error
           retention-days: 14
+      - name: Job summary
+        if: ${{ !cancelled() }}
+        env:
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          shopt -s nullglob
+          files=(vscode-ext-demo-*.vsix)
+          args=()
+          if [ "${#files[@]}" -eq 1 ]; then
+            args+=(--vsix "${files[0]}" --artifact-url "$ARTIFACT_URL")
+          fi
+          node scripts/ci-summary.mjs build --title "Build" \
+            --step "Package=$PACKAGE_OUTCOME=$RUNNER_TEMP/logs/package.log" \
+            --step "Check the .vsix=$CHECK_OUTCOME=$RUNNER_TEMP/logs/check.log" \
+            --step "Upload=$UPLOAD_OUTCOME=" \
+            "${args[@]}" \
+            >> "$GITHUB_STEP_SUMMARY"
