@@ -1,4 +1,4 @@
-// Production build, then vsce. Any failing step stops the script with a non-zero exit code.
+// Build, then vsce. Any failing step stops the script with a non-zero exit code.
 // Run through `npm run package`; npm puts the local binaries on PATH.
 import { spawnSync } from 'node:child_process';
 

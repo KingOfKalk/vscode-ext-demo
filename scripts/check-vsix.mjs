@@ -18,7 +18,7 @@ export const REQUIRED_FILES = [
   '[Content_Types].xml',
 ];
 
-/** The changelog only exists once the first release has been made. */
+/** Allowed, but never in the .vsix today: `files` in package.json does not list the changelog. */
 export const OPTIONAL_FILES = ['extension/changelog.md'];
 
 /**
