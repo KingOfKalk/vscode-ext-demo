@@ -37,10 +37,10 @@ export async function handleWebviewMessage(raw: unknown, deps: MessageDeps): Pro
       deps.post(buildState(deps.store.count, deps.message()));
       return;
     case 'increment':
-      await guarded('increment the counter', () => deps.store.increment(), deps.onError);
+      await guarded('incrementing the counter', () => deps.store.increment(), deps.onError);
       return;
     case 'reset':
-      await guarded('reset the counter', () => deps.store.reset(), deps.onError);
+      await guarded('resetting the counter', () => deps.store.reset(), deps.onError);
       return;
   }
 }

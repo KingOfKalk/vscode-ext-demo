@@ -5,7 +5,7 @@ export interface Settings {
   openLocation: 'tab' | 'beside';
 }
 
-const DEFAULT_MESSAGE = 'Hello from kingofkalk!';
+export const DEFAULT_MESSAGE = 'Hello from kingofkalk!';
 const MIN_STEP = 1;
 const MAX_STEP = 100;
 

@@ -172,7 +172,7 @@ describe('sidebar', () => {
 
   it('has the actions view in that container', () => {
     expect(pkg.contributes.views).toEqual({
-      [CONFIG_SECTION]: [{ id: VIEW_ID, name: 'Actions' }],
+      [CONFIG_SECTION]: [{ id: VIEW_ID, name: 'Demo' }],
     });
   });
 });

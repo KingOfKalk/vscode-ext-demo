@@ -1,4 +1,5 @@
 import { COMMANDS } from './ids';
+import { DEFAULT_MESSAGE } from './settings';
 
 export const STATUS_BAR_TOOLTIP = 'Open the Demo window';
 
@@ -21,4 +22,9 @@ export function actionRows(count: number): ActionRow[] {
     { id: 'showLog', label: 'Show log', icon: 'output', command: COMMANDS.showLog },
     { id: 'counter', label: `Counter: ${count}`, icon: 'symbol-numeric' },
   ];
+}
+
+/** The text of Say Hello: a blank message shows nothing in VS Code, so the default is used. */
+export function helloText(message: string): string {
+  return message.trim() === '' ? DEFAULT_MESSAGE : message;
 }

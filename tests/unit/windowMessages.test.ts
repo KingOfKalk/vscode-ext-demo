@@ -75,13 +75,13 @@ describe('handleWebviewMessage', () => {
     const error = new Error('save failed');
     const { deps, onError } = setup({ increment: () => Promise.reject(error) });
     await expect(handleWebviewMessage({ type: 'increment' }, deps)).resolves.toBeUndefined();
-    expect(onError).toHaveBeenCalledExactlyOnceWith('increment the counter', error);
+    expect(onError).toHaveBeenCalledExactlyOnceWith('incrementing the counter', error);
   });
 
   it('reports a rejected reset and resolves', async () => {
     const error = new Error('save failed');
     const { deps, onError } = setup({ reset: () => Promise.reject(error) });
     await expect(handleWebviewMessage({ type: 'reset' }, deps)).resolves.toBeUndefined();
-    expect(onError).toHaveBeenCalledExactlyOnceWith('reset the counter', error);
+    expect(onError).toHaveBeenCalledExactlyOnceWith('resetting the counter', error);
   });
 });

@@ -1,139 +1,76 @@
 import * as vscode from 'vscode';
-import type { ReportError } from './counterActions';
-import type { CounterStore } from './counterStore';
-import { describeError } from './describe';
 import { VIEW_TYPE } from './ids';
 import { createNonce } from './nonce';
-import type { ToWebview } from './protocol';
-import type { Settings } from './settings';
 import { renderWindowHtml } from './windowHtml';
-import { buildState, handleWebviewMessage, type MessageLog } from './windowMessages';
+import type { PanelHandle, WindowHost } from './windowController';
 
-export interface DemoWindowDeps {
-  extensionUri: vscode.Uri;
-  store: CounterStore;
-  log: MessageLog;
-  getSettings: () => Settings;
-  onError: ReportError;
-}
+const TITLE = 'Demo Window';
 
-/**
- * The Demo window: one editor tab (a webview panel) at most. It only displays the store.
- * A new panel and a panel restored after a reload get the same wiring.
- */
-export class DemoWindow implements vscode.Disposable {
-  private panel: vscode.WebviewPanel | undefined;
-  /** Sends the current state to the open window. */
-  private send: (() => void) | undefined;
-  /** Releases the listeners of the open window. */
-  private release: (() => void) | undefined;
+/** The VS Code side of the Demo window: creates panels and maps them to `PanelHandle`. */
+export class VsCodeWindowHost implements WindowHost {
+  constructor(private readonly extensionUri: vscode.Uri) {}
 
-  constructor(private readonly deps: DemoWindowDeps) {}
-
-  /** Shows the window; reveals it if it is already open. */
-  open(): void {
-    if (this.panel) {
-      this.panel.reveal();
-      return;
-    }
-    const column =
-      this.deps.getSettings().openLocation === 'beside'
-        ? vscode.ViewColumn.Beside
-        : vscode.ViewColumn.Active;
-    this.attach(
-      vscode.window.createWebviewPanel(VIEW_TYPE, 'Demo Window', column, this.webviewOptions()),
+  create(location: 'tab' | 'beside'): PanelHandle {
+    const column = location === 'beside' ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
+    return this.wrap(
+      vscode.window.createWebviewPanel(VIEW_TYPE, TITLE, column, this.webviewOptions()),
     );
   }
 
-  /** Takes over a panel that VS Code restored. Only one window may exist. */
-  restore(panel: vscode.WebviewPanel): void {
-    if (this.panel) {
-      this.deps.log.info('Window already open; closing the restored one');
-      panel.dispose();
-      this.panel.reveal();
-      return;
-    }
-    // The options are not saved with the panel.
+  /** Maps a panel that VS Code restored. */
+  adopt(panel: vscode.WebviewPanel): PanelHandle {
+    // The saved options hold the extension folder, which changes with a new version.
     panel.webview.options = this.webviewOptions();
-    this.attach(panel);
+    return this.wrap(panel);
   }
 
-  /** Sends the state again, for example after the `message` setting changed. */
-  refresh(): void {
-    this.send?.();
-  }
-
-  /**
-   * Stops listening to the store. The panel itself stays: closing it on shutdown would keep it
-   * from coming back after a reload.
-   */
-  dispose(): void {
-    this.release?.();
+  async closeStaleTabs(): Promise<void> {
+    // The tab input of a webview panel has the view type with a prefix.
+    const tabs = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith(VIEW_TYPE),
+      );
+    if (tabs.length > 0 && !(await vscode.window.tabGroups.close(tabs))) {
+      throw new Error(`VS Code did not close ${tabs.length} old window tab(s)`);
+    }
   }
 
   private webviewOptions(): vscode.WebviewOptions {
-    const root = this.deps.extensionUri;
     return {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(root, 'dist'), vscode.Uri.joinPath(root, 'media')],
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.extensionUri, 'dist'),
+        vscode.Uri.joinPath(this.extensionUri, 'media'),
+      ],
     };
   }
 
-  private attach(panel: vscode.WebviewPanel): void {
-    const { store, log, getSettings, onError } = this.deps;
-    let disposed = false;
-
-    const post = (message: ToWebview): void => {
-      if (disposed) {
-        return;
-      }
-      void panel.webview.postMessage(message).then(undefined, (error: unknown) => {
-        log.warn(`Could not post to the window: ${describeError(error)}`);
-      });
-    };
-    const send = (): void => {
-      post(buildState(store.count, getSettings().message));
-    };
-
-    // The handler is in place before the page exists, so its `ready` is never missed.
-    const subscriptions: { dispose(): void }[] = [
-      panel.webview.onDidReceiveMessage((raw: unknown) => {
-        void handleWebviewMessage(raw, {
-          store,
-          message: () => getSettings().message,
-          post,
-          log,
-          onError,
-        });
-      }),
-      store.onDidChange(send),
-    ];
-    const release = (): void => {
-      disposed = true;
-      for (const subscription of subscriptions.splice(0)) {
-        subscription.dispose();
-      }
-    };
-    subscriptions.push(
-      panel.onDidDispose(() => {
-        release();
-        this.panel = undefined;
-        this.send = undefined;
-        this.release = undefined;
-      }),
-    );
-
-    this.panel = panel;
-    this.send = send;
-    this.release = release;
-
+  private wrap(panel: vscode.WebviewPanel): PanelHandle {
     const { webview } = panel;
-    const root = this.deps.extensionUri;
-    webview.html = renderWindowHtml({
-      nonce: createNonce(),
-      cspSource: webview.cspSource,
-      scriptUri: webview.asWebviewUri(vscode.Uri.joinPath(root, 'dist', 'webview.js')).toString(),
-      styleUri: webview.asWebviewUri(vscode.Uri.joinPath(root, 'media', 'window.css')).toString(),
-    });
+    return {
+      reveal: () => {
+        panel.reveal();
+      },
+      dispose: () => {
+        panel.dispose();
+      },
+      post: (message) => webview.postMessage(message),
+      onMessage: (listener) => webview.onDidReceiveMessage(listener),
+      onDispose: (listener) => panel.onDidDispose(listener),
+      setHtml: () => {
+        webview.html = renderWindowHtml({
+          nonce: createNonce(),
+          cspSource: webview.cspSource,
+          scriptUri: this.resourceUri(webview, 'dist', 'webview.js'),
+          styleUri: this.resourceUri(webview, 'media', 'window.css'),
+        });
+      },
+    };
+  }
+
+  private resourceUri(webview: vscode.Webview, ...path: string[]): string {
+    return webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, ...path)).toString();
   }
 }

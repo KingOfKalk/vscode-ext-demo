@@ -34,3 +34,15 @@ describe('guarded', () => {
     expect(report).toHaveBeenCalledExactlyOnceWith('increment', error);
   });
 });
+
+describe('guarded with a failing report', () => {
+  it('still resolves when the report itself throws', async () => {
+    const report = vi.fn(() => {
+      throw new Error('log is disposed');
+    });
+    await expect(
+      guarded('reset', () => Promise.reject(new Error('save failed')), report),
+    ).resolves.toBeUndefined();
+    expect(report).toHaveBeenCalledTimes(1);
+  });
+});
