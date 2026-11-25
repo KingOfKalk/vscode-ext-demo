@@ -32,7 +32,7 @@ const TRIGGER_TIMEOUT_MS = 20_000;
 // an expression like `execSync('sleep 8')` blocks the host until it returns, and then it continues.
 // `eval` does not pause; what blocks the host after an `await` is ended when the result is late.
 // Expressions can read what the extension host can: `process.env` prints the environment of the session,
-// where `sessionEnv` leaves out only what is named like a credential.
+// which `sessionEnv` limits to a short list (path, language, time zone, user) plus its own directories.
 const EVAL_TIMEOUT_MS = 2000;
 const EVAL_ANSWER_MS = 10_000;
 /** In a pause: for all expressions together, and for everything. */

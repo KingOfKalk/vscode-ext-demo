@@ -5,45 +5,62 @@ import { HOME, TEMP } from '../../../scripts/live/session.ts';
 describe('sessionEnv', () => {
   it('has its own home and temporary directories', () => {
     expect(
-      sessionEnv({ PATH: '/usr/bin', HOME: '/home/a', TMPDIR: '/var/tmp', VSCODE_PID: '1' }),
+      sessionEnv({
+        PATH: '/usr/bin',
+        HOME: '/home/a',
+        TMPDIR: '/var/tmp',
+        XDG_RUNTIME_DIR: '/run',
+      }),
     ).toEqual({ PATH: '/usr/bin', HOME, TMPDIR: TEMP, XDG_RUNTIME_DIR: TEMP });
   });
 
+  it('passes the path, language, time zone and user', () => {
+    const env = {
+      PATH: '/usr/bin',
+      LANG: 'de_DE.UTF-8',
+      LC_ALL: 'C',
+      LC_CTYPE: 'C.UTF-8',
+      TZ: 'Europe/Berlin',
+      USER: 'a',
+    };
+    expect(sessionEnv(env)).toEqual({ ...env, HOME, TMPDIR: TEMP, XDG_RUNTIME_DIR: TEMP });
+  });
+
+  it("is only the session's own with an empty caller environment", () => {
+    expect(sessionEnv({})).toEqual({ HOME, TMPDIR: TEMP, XDG_RUNTIME_DIR: TEMP });
+  });
+
   it.each([
+    // Credentials, under any name.
     'NPM_TOKEN',
-    'npm_config__token',
+    'npm_config__authToken',
     'OPENAI_API_KEY',
     'CLIENT_SECRET',
     'SSH_AUTH_SOCK',
     'GH_TOKEN',
-    'GH_HOST',
     'GITHUB_TOKEN',
-    'GITHUB_ACTOR',
-    'REMOTE_CONTAINERS',
     'REMOTE_CONTAINERS_IPC',
-    'REMOTE_CONTAINERS_SOCKETS',
     'GIT_ASKPASS',
-    'SSH_ASKPASS',
     'DB_PASSWORD',
     'AWS_ACCESS_KEY',
-    'SIGNING_KEY',
-    'TOKEN',
-    'PASSWORD',
-  ])('drops %s: a terminal of the session shows the environment', (name) => {
-    expect(sessionEnv({ [name]: 'secret' })).not.toHaveProperty(name);
-  });
-
-  it.each([
-    'TOKENS',
-    'GHOST',
-    'MY_GH_X',
-    'API_KEYBOARD',
-    'SECRET_SANTA',
-    'KEYBOARD',
-    'PASSWORDS',
-    'MY_TOKEN_COUNT',
-    'REMOTE',
-  ])('keeps %s', (name) => {
-    expect(sessionEnv({ [name]: 'a' })).toHaveProperty(name, 'a');
+    'MY_CREDENTIALS',
+    'DATABASE_URL',
+    // What changes how VS Code, Node or the display start.
+    'NODE_OPTIONS',
+    'NODE_PATH',
+    'NODE_EXTRA_CA_CERTS',
+    'VSCODE_PID',
+    'ELECTRON_RUN_AS_NODE',
+    'DISPLAY',
+    'WAYLAND_DISPLAY',
+    'XDG_CONFIG_HOME',
+    'XDG_SESSION_TYPE',
+    'LD_PRELOAD',
+    'LD_LIBRARY_PATH',
+    'SHELL',
+    'LOGNAME',
+    'MYLC_ALL',
+  ])('does not pass %s', (name) => {
+    expect(sessionEnv({ [name]: 'x' })).not.toHaveProperty(name);
   });
 });
