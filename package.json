@@ -22,6 +22,15 @@
     "onWebviewPanel:vscodeExtDemo.window"
   ],
   "main": "./dist/extension.js",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted folder the extension ignores the folder's own greeting (the message setting) and uses yours.",
+      "restrictedConfigurations": [
+        "vscodeExtDemo.message"
+      ]
+    }
+  },
   "contributes": {
     "commands": [
       {
