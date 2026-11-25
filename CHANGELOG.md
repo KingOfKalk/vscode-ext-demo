@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.0](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.1.0...v0.2.0) (2026-11-25)
+
+
+### Features
+
+* add a Decrement button and command ([#17](https://github.com/KingOfKalk/vscode-ext-demo/issues/17)) ([4ee9313](https://github.com/KingOfKalk/vscode-ext-demo/commit/4ee93134b17f433ee1d26c4a0df1f3b1df7504a7))
+
+
+### Documentation
+
+* improve AGENTS.md from the first trial ([#20](https://github.com/KingOfKalk/vscode-ext-demo/issues/20)) ([842906d](https://github.com/KingOfKalk/vscode-ext-demo/commit/842906dcf8ae89217bbb65c572e222162d11f2fe))
+
+
+### Chores
+
+* **live:** end waits on the first event and small follow-ups ([#14](https://github.com/KingOfKalk/vscode-ext-demo/issues/14)) ([60c2b30](https://github.com/KingOfKalk/vscode-ext-demo/commit/60c2b306c2542cdba76b66d6f6e9f434e0f7f4fc))
+
 ## 0.1.0 (2026-11-25)
 
 
