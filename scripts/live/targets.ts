@@ -53,23 +53,74 @@ export function findNamed(
   );
 }
 
-/** How a candidate is written in an error message: what to give as the target to pick it. */
-export function formatCandidate({ scope, role, name }: Candidate): string {
-  return `role=${role}:${name} (${scope})`;
+/** What to give as the target to pick a candidate; the place is not part of it, see below. */
+export function candidateTarget({ role, name }: Candidate): string {
+  return `role=${role}:${name}`;
 }
+
+const PLACES: Record<Scope, string> = {
+  workbench: 'in the window of VS Code',
+  webview: 'in the Demo window',
+};
 
 const MAX_LISTED = 12;
 
-function listed(candidates: readonly string[], more: string): string {
-  const shown = candidates.slice(0, MAX_LISTED).map((line) => `  ${line}`);
-  if (candidates.length > MAX_LISTED)
-    shown.push(`  … ${candidates.length - MAX_LISTED} more${more}`);
-  return shown.join('\n');
+/**
+ * Lists candidates for an error message: under the place each is in, one target per line, each line
+ * a target as it is, so that it can be pasted back. A target is written once however often it
+ * occurs. A target that more than one element has (the same role and name twice, or in both places)
+ * does not narrow; the text says so and points to `css=`.
+ */
+export function listCandidates(candidates: readonly Candidate[], more = ''): string {
+  const unique = new Map<string, Candidate>();
+  const count = new Map<string, number>();
+  for (const candidate of candidates) {
+    const target = candidateTarget(candidate);
+    count.set(target, (count.get(target) ?? 0) + 1);
+    unique.set(`${candidate.scope} ${target}`, candidate);
+  }
+  const all = [...unique.values()];
+  const shown = all.slice(0, MAX_LISTED);
+  const lines: string[] = [];
+  for (const scope of ['webview', 'workbench'] as const) {
+    const here = shown.filter((candidate) => candidate.scope === scope);
+    if (here.length === 0) continue;
+    lines.push(
+      `  ${PLACES[scope]}:`,
+      ...here.map((candidate) => `    ${candidateTarget(candidate)}`),
+    );
+  }
+  if (all.length > shown.length) lines.push(`  … ${all.length - shown.length} more${more}`);
+  const blunt = [...count].filter(([, n]) => n > 1).map(([target]) => target);
+  if (blunt.length > 0) {
+    lines.push(
+      `  not unique, so a role and name do not tell them apart: ${blunt.slice(0, 3).join(', ')}; use css=<selector> (see: npm run live -- snapshot)`,
+    );
+  }
+  return lines.join('\n');
+}
+
+/** What `resolve` does with the elements that have a name: nothing, the one, or too many. */
+export type Decision<T> = { kind: 'none' } | { kind: 'one'; value: T } | { kind: 'several' };
+
+export function decideMatches<T>(found: readonly T[]): Decision<T> {
+  const [only] = found;
+  if (only === undefined || found.length === 0) return { kind: 'none' };
+  return found.length === 1 ? { kind: 'one', value: only } : { kind: 'several' };
+}
+
+/** The same for counts of elements, one per place: `value` is the index of the place with the one. */
+export function decideCounts(counts: readonly number[]): Decision<number> {
+  const total = counts.reduce((sum, count) => sum + count, 0);
+  if (total === 0) return { kind: 'none' };
+  return total === 1
+    ? { kind: 'one', value: counts.findIndex((count) => count === 1) }
+    : { kind: 'several' };
 }
 
 /** Error text for a name that more than one element has. */
 export function describeSeveral(target: string, found: readonly Candidate[]): string {
-  return `${found.length} elements match "${target}"; narrow it with one of:\n${listed(found.map(formatCandidate), '')}`;
+  return `${found.length} elements match "${target}"; narrow it with one of:\n${listCandidates(found)}`;
 }
 
 /** Roles of things a person clicks or types into; the others are in the way in a list of choices. */
@@ -109,7 +160,7 @@ export function describeNone(
   for (const { scope, nodes } of webviewFirst) {
     for (const node of nodes) {
       const candidate = { scope, role: node.role, name: node.name };
-      const key = formatCandidate(candidate);
+      const key = `${scope} ${candidateTarget(candidate)}`;
       if (node.name !== '' && POINTABLE.has(node.role) && !seen.has(key)) {
         seen.add(key);
         all.push(candidate);
@@ -124,7 +175,7 @@ export function describeNone(
   const what = `nothing${role ? ` with the role ${role}` : ''} is named "${target}"`;
   if (all.length === 0) return `${what}; nothing in the window can be clicked`;
   if (similar.length > 0) {
-    return `${what} exactly; similar:\n${listed(similar.map(formatCandidate), '')}`;
+    return `${what} exactly; similar:\n${listCandidates(similar)}`;
   }
-  return `${what}; some of what there is:\n${listed(all.map(formatCandidate), '; see: npm run live -- snapshot')}`;
+  return `${what}; some of what there is:\n${listCandidates(all, '; see: npm run live -- snapshot')}`;
 }

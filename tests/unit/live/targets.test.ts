@@ -4,7 +4,10 @@ import {
   describeNone,
   describeSeveral,
   findNamed,
-  formatCandidate,
+  candidateTarget,
+  decideCounts,
+  decideMatches,
+  listCandidates,
   parseTarget,
   type Scope,
 } from '../../../scripts/live/targets.ts';
@@ -69,41 +72,127 @@ describe('findNamed', () => {
     ]);
     expect(findNamed(SCOPES, 'reset')).toEqual([]);
     expect(findNamed(SCOPES, 'Demo: 3')).toEqual([]);
+    expect(findNamed(SCOPES, 'Reset Count')).toEqual([]);
   });
 
-  it('finds the same name in both places and with several roles', () => {
-    expect(findNamed(SCOPES, 'Demo').map(formatCandidate)).toEqual([
-      'role=tab:Demo (workbench)',
-      'role=heading:Demo (workbench)',
+  it('finds the same name with several roles', () => {
+    expect(findNamed(SCOPES, 'Demo').map(candidateTarget)).toEqual([
+      'role=tab:Demo',
+      'role=heading:Demo',
     ]);
   });
 
   it('narrows by role', () => {
-    expect(findNamed(SCOPES, 'Demo', 'tab').map(formatCandidate)).toEqual([
-      'role=tab:Demo (workbench)',
-    ]);
+    expect(findNamed(SCOPES, 'Demo', 'tab').map(candidateTarget)).toEqual(['role=tab:Demo']);
     expect(findNamed(SCOPES, 'Demo', 'button')).toEqual([]);
   });
 });
 
-describe('error texts', () => {
-  it('lists the several matches so that each can be written as a target', () => {
-    const text = describeSeveral('Demo', findNamed(SCOPES, 'Demo'));
+describe('decideMatches and decideCounts', () => {
+  it('has nothing, one, or several', () => {
+    expect(decideMatches([])).toEqual({ kind: 'none' });
+    expect(decideMatches(['a'])).toEqual({ kind: 'one', value: 'a' });
+    expect(decideMatches(['a', 'b'])).toEqual({ kind: 'several' });
+    expect(decideMatches(['a', 'a'])).toEqual({ kind: 'several' });
+  });
+
+  it('counts the matches of all places together, not place by place', () => {
+    expect(decideCounts([0, 0])).toEqual({ kind: 'none' });
+    expect(decideCounts([])).toEqual({ kind: 'none' });
+    expect(decideCounts([1, 0])).toEqual({ kind: 'one', value: 0 });
+    expect(decideCounts([0, 1])).toEqual({ kind: 'one', value: 1 });
+    expect(decideCounts([1, 1])).toEqual({ kind: 'several' });
+    expect(decideCounts([2, 0])).toEqual({ kind: 'several' });
+  });
+});
+
+/** The lines that are targets: not the place headings, not the notes. */
+function targetLines(text: string): string[] {
+  return text
+    .split('\n')
+    .filter((line) => line.startsWith('    '))
+    .map((line) => line.trim());
+}
+
+describe('listCandidates', () => {
+  it('writes each target on a line of its own, under its place', () => {
+    const text = listCandidates(findNamed(SCOPES, 'Demo').concat(findNamed(SCOPES, 'Reset')));
     expect(text).toBe(
-      '2 elements match "Demo"; narrow it with one of:\n' +
-        '  role=tab:Demo (workbench)\n  role=heading:Demo (workbench)',
+      [
+        '  in the Demo window:',
+        '    role=button:Reset',
+        '  in the window of VS Code:',
+        '    role=tab:Demo',
+        '    role=heading:Demo',
+      ].join('\n'),
     );
-    for (const line of text.split('\n').slice(1)) {
-      const target = /role=\S+:Demo/.exec(line)?.[0];
-      expect(parseTarget(target ?? '')).toMatchObject({ kind: 'name', name: 'Demo' });
+  });
+
+  it('writes a target once, however often it occurs, and says it does not narrow', () => {
+    const twice = { scope: 'workbench', role: 'treeitem', name: 'Open window' } as const;
+    const text = listCandidates([twice, twice, { scope: 'workbench', role: 'tab', name: 'Demo' }]);
+    expect(targetLines(text)).toEqual(['role=treeitem:Open window', 'role=tab:Demo']);
+    expect(text).toContain('not unique');
+    expect(text).toContain('role=treeitem:Open window');
+    expect(text).toContain('css=<selector>');
+  });
+
+  it('also says it when the same role and name are in both places', () => {
+    const text = listCandidates([
+      { scope: 'workbench', role: 'button', name: 'Reset' },
+      { scope: 'webview', role: 'button', name: 'Reset' },
+    ]);
+    expect(targetLines(text)).toEqual(['role=button:Reset', 'role=button:Reset']);
+    expect(text).toContain('not unique');
+  });
+
+  it('says nothing about uniqueness when each target is unique', () => {
+    expect(listCandidates(findNamed(SCOPES, 'Demo'))).not.toContain('not unique');
+  });
+
+  it('cuts a long list', () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      scope: 'workbench' as const,
+      role: 'button',
+      name: `B${i}`,
+    }));
+    const text = listCandidates(many, '; more');
+    expect(targetLines(text)).toHaveLength(12);
+    expect(text).toContain('… 8 more; more');
+  });
+});
+
+describe('error texts', () => {
+  it('lists the several matches', () => {
+    expect(describeSeveral('Demo', findNamed(SCOPES, 'Demo'))).toBe(
+      '2 elements match "Demo"; narrow it with one of:\n' +
+        '  in the window of VS Code:\n    role=tab:Demo\n    role=heading:Demo',
+    );
+  });
+
+  it('every line that is listed, pasted back as a target, is a target for that very element', () => {
+    const several = describeSeveral('Demo', findNamed(SCOPES, 'Demo'));
+    const none = describeNone('Nope', SCOPES);
+    const similar = describeNone('reset', SCOPES);
+    for (const text of [several, none, similar]) {
+      const lines = targetLines(text);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        const target = parseTarget(line);
+        expect(target.kind).toBe('name');
+        if (target.kind !== 'name') continue;
+        const found = findNamed(SCOPES, target.name, target.role);
+        expect(found.length).toBeGreaterThan(0);
+        expect(found.map(candidateTarget)).toContain(line);
+      }
     }
   });
 
   it('lists similar names when nothing matches', () => {
     const text = describeNone('reset', SCOPES);
     expect(text).toContain('nothing is named "reset" exactly; similar:');
-    expect(text).toContain('role=button:Reset (webview)');
-    expect(text).toContain('role=button:Reset Counter (workbench)');
+    expect(text).toContain('role=button:Reset');
+    expect(text).toContain('role=button:Reset Counter');
     expect(text).not.toContain('Click me');
   });
 

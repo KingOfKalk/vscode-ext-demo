@@ -2,6 +2,7 @@
 // one line per thing, the names are those that `click` takes.
 import type { Frame, Page } from 'playwright-core';
 import { parseAriaSnapshot, type AriaNode } from './aria.ts';
+import { guard } from './errors.ts';
 import type { Connection } from './vscode.ts';
 
 /** What `collectSnapshot` reads; each part is empty if it is not visible. */
@@ -120,37 +121,57 @@ export function formatSnapshot(ui: UiSnapshot): string {
 }
 
 const READ_TIMEOUT_MS = 5000;
+/** For what comes and goes (a toast, the palette, the Demo window): if it is gone, it is not shown. */
+const TRANSIENT_TIMEOUT_MS = 1000;
 /** Where VS Code puts an editor over the window, like Settings. */
 export const MODAL_EDITOR = '.modal-editor-part';
 
-/** The tree of a part of the window, empty if it is not there or not visible. */
-async function readPart(from: Page | Frame, selector: string): Promise<AriaNode[] | undefined> {
-  const part = from.locator(selector).first();
+/**
+ * Runs the read of a part. A part that comes and goes can vanish while it is read; then it is not
+ * shown, which is true, instead of an error after a wait. The others must be there.
+ */
+async function readOf<T>(
+  what: string,
+  transient: boolean,
+  read: (timeout: number) => Promise<T | undefined>,
+): Promise<T | undefined> {
+  if (!transient) return guard(`cannot read ${what}`, () => read(READ_TIMEOUT_MS));
   try {
-    if (!(await part.isVisible())) return undefined;
-    return parseAriaSnapshot(await part.ariaSnapshot({ timeout: READ_TIMEOUT_MS }));
-  } catch (error) {
-    // The Demo window is replaced when its tab is shown or hidden; what is gone is not shown.
-    if ('mainFrame' in from) throw error; // A page: nothing may go wrong there.
+    return await read(TRANSIENT_TIMEOUT_MS);
+  } catch {
     return undefined;
   }
 }
 
+/** The tree of a part of the window, undefined if it is not visible. */
+function readPart(
+  from: Page | Frame,
+  selector: string,
+  what: string,
+  transient: boolean,
+): Promise<AriaNode[] | undefined> {
+  return readOf(what, transient, async (timeout) => {
+    const part = from.locator(selector).first();
+    if (!(await part.isVisible())) return undefined;
+    return parseAriaSnapshot(await part.ariaSnapshot({ timeout }));
+  });
+}
+
 /** The title of the modal editor, if one is open. */
-async function readModalEditor(page: Page): Promise<string | undefined> {
-  if (!(await page.locator(MODAL_EDITOR).first().isVisible())) return undefined;
-  const title = await page
-    .locator('#modal-editor-title')
-    .first()
-    .innerText({ timeout: READ_TIMEOUT_MS });
-  return title.trim() || 'untitled';
+function readModalEditor(page: Page): Promise<string | undefined> {
+  return readOf('the editor over the window', true, async (timeout) => {
+    if (!(await page.locator(MODAL_EDITOR).first().isVisible())) return undefined;
+    const title = await page.locator('#modal-editor-title').first().innerText({ timeout });
+    return title.trim() || 'untitled';
+  });
 }
 
 /** Reads the window now. The Demo window is looked up again each time, see `Connection.webview`. */
 export async function collectSnapshot(connection: Connection): Promise<UiSnapshot> {
   const { page } = connection;
-  const part = async (id: string) => (await readPart(page, `[id="workbench.parts.${id}"]`)) ?? [];
-  const frame = await connection.webview();
+  const part = async (id: string) =>
+    (await readPart(page, `[id="workbench.parts.${id}"]`, `the ${id}`, false)) ?? [];
+  const frame = await guard('cannot find the Demo window', () => connection.webview());
   const [
     activityBar,
     sidebar,
@@ -166,11 +187,11 @@ export async function collectSnapshot(connection: Connection): Promise<UiSnapsho
     part('sidebar'),
     part('editor'),
     part('statusbar'),
-    readPart(page, '.notifications-toasts'),
-    readPart(page, '.notifications-center'),
-    readPart(page, '.quick-input-widget'),
+    readPart(page, '.notifications-toasts', 'the notifications', true),
+    readPart(page, '.notifications-center', 'the notification centre', true),
+    readPart(page, '.quick-input-widget', 'the quick input', true),
     readModalEditor(page),
-    frame ? readPart(frame, 'body') : undefined,
+    frame ? readPart(frame, 'body', 'the Demo window', true) : undefined,
   ]);
   return {
     activityBar,

@@ -1,6 +1,7 @@
 // `screenshot`: a PNG of the whole window in .vscode-live/ (gitignored). Nothing leaves that folder.
 import { mkdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { guard } from './errors.ts';
 import { LIVE_DIR } from './session.ts';
 import type { Connection } from './vscode.ts';
 
@@ -34,13 +35,6 @@ export async function screenshot(
 ): Promise<string> {
   const path = screenshotPath(name, now);
   mkdirSync(LIVE_DIR, { recursive: true, mode: 0o700 });
-  try {
-    await page.screenshot({ path, timeout: 10_000 });
-  } catch (error) {
-    throw new Error(
-      `cannot take the screenshot: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`,
-      { cause: error },
-    );
-  }
+  await guard('cannot take the screenshot', () => page.screenshot({ path, timeout: 10_000 }));
   return path;
 }

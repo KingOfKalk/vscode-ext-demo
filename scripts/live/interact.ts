@@ -3,13 +3,25 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Frame, Locator, Page } from 'playwright-core';
 import { parseAriaSnapshot, type AriaNode } from './aria.ts';
+import { ActionError, guard, oneLine } from './errors.ts';
+import {
+  describeNoRow,
+  isSettled,
+  nextFocusStep,
+  pickRow,
+  samePalette,
+  type PaletteRow,
+  type PaletteState,
+} from './palette.ts';
 import { waitFor } from './processes.ts';
 import { collectSnapshot, formatSnapshot, MODAL_EDITOR } from './snapshot.ts';
 import {
+  candidateTarget,
+  decideCounts,
+  decideMatches,
   describeNone,
   describeSeveral,
   findNamed,
-  formatCandidate,
   parseTarget,
   type Scope,
 } from './targets.ts';
@@ -19,19 +31,6 @@ const ACTION_TIMEOUT_MS = 5000;
 /** How long `click` looks for a change in the window after the click. */
 const EFFECT_TIMEOUT_MS = 1500;
 const EFFECT_POLL_MS = 50;
-const MAX_LISTED_ROWS = 5;
-
-/** The first line of an error, and the last line of Playwright's log (what it was waiting for). */
-export function oneLine(error: unknown): string {
-  const lines = (error instanceof Error ? error.message : String(error)).split('\n');
-  const first = lines[0]?.trim() ?? '';
-  const last = lines
-    .slice(1)
-    .map((text) => text.trim())
-    .filter((text) => text.startsWith('-'))
-    .at(-1);
-  return last && last !== first ? `${first} (${last.replace(/^-\s*/, '')})` : first;
-}
 
 interface ScopedFrame {
   scope: Scope;
@@ -46,8 +45,8 @@ function scopedFrames(page: Page, webview: Frame | undefined): ScopedFrame[] {
 }
 
 async function readTree(frame: Frame): Promise<AriaNode[]> {
-  return parseAriaSnapshot(
-    await frame.locator('body').ariaSnapshot({ timeout: ACTION_TIMEOUT_MS }),
+  return guard('cannot read the window', async () =>
+    parseAriaSnapshot(await frame.locator('body').ariaSnapshot({ timeout: ACTION_TIMEOUT_MS })),
   );
 }
 
@@ -65,12 +64,14 @@ interface PageElement {
 
 /** What is at the end of a css target, for the error that lists several. */
 async function describeElements(locator: Locator, scope: Scope): Promise<string[]> {
-  const found = await locator.evaluateAll((elements: PageElement[]) =>
-    elements.slice(0, 12).map((element) => {
-      const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
-      const id = element.id ? `#${element.id}` : '';
-      return `${element.tagName.toLowerCase()}${id} "${text}"`;
-    }),
+  const found = await guard('cannot describe the elements', () =>
+    locator.evaluateAll((elements: PageElement[]) =>
+      elements.slice(0, 12).map((element) => {
+        const text = (element.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+        const id = element.id ? `#${element.id}` : '';
+        return `${element.tagName.toLowerCase()}${id} "${text}"`;
+      }),
+    ),
   );
   return found.map((text) => `${text} (${scope})`);
 }
@@ -104,35 +105,39 @@ export async function resolve(
       scope,
       locator: frame.locator(target.selector).filter({ visible: true }),
     }));
-    const counts = await Promise.all(found.map(({ locator }) => locator.count()));
-    const total = counts.reduce((sum, count) => sum + count, 0);
-    if (total === 1) {
-      const index = counts.findIndex((count) => count === 1);
-      const hit = found[index];
+    const counts = await guard('cannot count the elements', () =>
+      Promise.all(found.map(({ locator }) => locator.count())),
+    );
+    const decision = decideCounts(counts);
+    if (decision.kind === 'one') {
+      const hit = found[decision.value];
       if (hit) return { locator: hit.locator, description: `css=${target.selector}` };
     }
-    if (total === 0) throw new Error(`no visible element matches ${text}`);
+    if (decision.kind === 'none') throw new ActionError(`no visible element matches ${text}`);
     const rows = (
       await Promise.all(found.map(({ scope, locator }) => describeElements(locator, scope)))
     ).flat();
-    throw new Error(
-      `${total} elements match ${text}; narrow the selector:\n${rows.map((row) => `  ${row}`).join('\n')}`,
+    throw new ActionError(
+      `${counts.reduce((sum, n) => sum + n, 0)} elements match ${text}; narrow the selector:\n${rows.map((row) => `  ${row}`).join('\n')}`,
     );
   }
   const scopes = await Promise.all(
     frames.map(async ({ scope, frame }) => ({ scope, frame, nodes: await readTree(frame) })),
   );
   const found = findNamed(scopes, target.name, target.role);
-  const [only] = found;
-  if (found.length > 1) throw new Error(describeSeveral(text, found));
-  if (!only) throw new Error(describeNone(target.name, scopes, target.role));
+  const decision = decideMatches(found);
+  if (decision.kind === 'several') throw new ActionError(describeSeveral(text, found));
+  if (decision.kind === 'none') {
+    throw new ActionError(describeNone(target.name, scopes, target.role));
+  }
+  const only = decision.value;
   const frame = scopes.find(({ scope }) => scope === only.scope)?.frame;
-  if (!frame) throw new Error(`the ${only.scope} is gone; try again`);
+  if (!frame) throw new ActionError(`the ${only.scope} is gone; try again`);
   const locator = frame.getByRole(only.role as Parameters<Frame['getByRole']>[0], {
     name: only.name,
     exact: true,
   });
-  return { locator, description: formatCandidate(only) };
+  return { locator, description: candidateTarget(only) };
 }
 
 /** `resolve`, for those that only need the element. */
@@ -175,11 +180,11 @@ export async function click(connection: Connection, target: string): Promise<str
 
 /** Types into what has the focus; click a field first. */
 export async function type(connection: Connection, text: string): Promise<string> {
-  const focused = await connection.page.evaluate<string>(
-    'document.activeElement?.tagName.toLowerCase() ?? "body"',
+  const focused = await guard('cannot ask what has the focus', () =>
+    connection.page.evaluate<string>('document.activeElement?.tagName.toLowerCase() ?? "body"'),
   );
   if (focused === 'body' || focused === 'html') {
-    throw new Error('nothing has the focus; click a field first');
+    throw new ActionError('nothing has the focus; click a field first');
   }
   try {
     await connection.page.keyboard.type(text);
@@ -199,24 +204,42 @@ export async function key(connection: Connection, combo: string): Promise<string
   return `pressed ${combo}`;
 }
 
-/**
- * A failure that is worded for the user and whole as it is. Playwright's errors are not: they carry
- * a log, so `oneLine` cuts them, and they are put into one of these.
- */
-class ActionError extends Error {
-  override name = 'ActionError';
-}
-
 const QUICK_INPUT = '.quick-input-widget';
 
-/** The labels of the rows of the quick input, and which one has the focus. */
-async function paletteRows(page: Page): Promise<{ label: string; focused: boolean }[]> {
-  return page.locator(`${QUICK_INPUT} .monaco-list-row`).evaluateAll((rows: PageElement[]) =>
-    rows.map((row) => ({
-      label: row.querySelector('.label-name')?.textContent?.trim() ?? '',
-      focused: row.classList.contains('focused'),
-    })),
-  );
+/** The text in the input of the quick input, and its rows with the one that has the focus. */
+async function readPalette(page: Page): Promise<PaletteState> {
+  return guard('cannot read the command palette', async () => {
+    const rows = await page
+      .locator(`${QUICK_INPUT} .monaco-list-row`)
+      .evaluateAll((elements: PageElement[]): PaletteRow[] =>
+        elements.map((row) => ({
+          label: row.querySelector('.label-name')?.textContent?.trim() ?? '',
+          focused: row.classList.contains('focused'),
+        })),
+      );
+    const value = await page
+      .locator(`${QUICK_INPUT} .quick-input-box input`)
+      .first()
+      .inputValue({ timeout: ACTION_TIMEOUT_MS });
+    return { value, rows };
+  });
+}
+
+/** Reads the palette until two reads in a row are the same and it has the text that was typed. */
+async function readSettled(page: Page, title: string): Promise<PaletteState> {
+  let previous: PaletteState | undefined;
+  return waitFor(
+    `the command palette settles on "${title}"`,
+    async () => {
+      const now = await readPalette(page);
+      const settled = isSettled(previous, now, title);
+      previous = now;
+      return settled ? now : undefined;
+    },
+    { timeoutMs: ACTION_TIMEOUT_MS, pauseMs: EFFECT_POLL_MS },
+  ).catch((error: unknown) => {
+    throw new ActionError(oneLine(error));
+  });
 }
 
 async function paletteOpen(page: Page): Promise<boolean> {
@@ -233,21 +256,36 @@ async function closePalette(page: Page): Promise<void> {
   }
 }
 
-/** Moves the focus down the palette until it is on the row with this label. */
-async function focusRow(page: Page, label: string): Promise<void> {
-  for (let step = 0; ; step++) {
-    const rows = await paletteRows(page);
-    const at = rows.findIndex(({ focused }) => focused);
-    if (rows[at]?.label === label) return;
-    if (step >= rows.length) throw new ActionError(`the row "${label}" cannot be reached`);
+/**
+ * Moves the focus down the palette until it is on the row with this title, and presses Enter there.
+ * Every decision is made on a list that has settled, and Enter only if a read right before it is
+ * the same: the list filters a moment after typing, and Enter runs whatever has the focus then.
+ */
+async function runFocused(page: Page, title: string): Promise<void> {
+  let steps = 0;
+  for (;;) {
+    const state = await readSettled(page, title);
+    const step = nextFocusStep(state.rows, title, steps);
+    if (step === 'unreachable') throw new ActionError(`the row "${title}" cannot be reached`);
+    if (step === 'enter') {
+      if (!samePalette(state, await readPalette(page))) continue; // It moved; look again.
+      await page.keyboard.press('Enter');
+      return;
+    }
     await page.keyboard.press('ArrowDown');
-    // The list moves its focus a moment later; Enter must not run the row it left.
+    steps++;
+    // The list moves its focus a moment later; do not decide on the list before it did.
+    const was = state.rows.findIndex(({ focused }) => focused);
     await waitFor(
       'the focus moves to the next row',
       async () =>
-        (await paletteRows(page)).findIndex(({ focused }) => focused) !== at ? true : undefined,
+        (await readPalette(page)).rows.findIndex(({ focused }) => focused) !== was
+          ? true
+          : undefined,
       { timeoutMs: ACTION_TIMEOUT_MS, pauseMs: EFFECT_POLL_MS },
-    );
+    ).catch((error: unknown) => {
+      throw new ActionError(oneLine(error));
+    });
   }
 }
 
@@ -268,29 +306,14 @@ export async function runCommand(connection: Connection, title: string): Promise
     await page.keyboard.press('F1');
     await page.locator(QUICK_INPUT).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     await page.keyboard.insertText(title);
-    // The list filters as it is typed: wait for the row; if it does not come, show what is there.
-    const isTitle = ({ label }: { label: string }) => label === title;
-    const rows = await waitFor(
-      `the command palette shows "${title}"`,
-      async () => {
-        const now = await paletteRows(page);
-        return now.some(isTitle) ? now : undefined;
-      },
-      { timeoutMs: ACTION_TIMEOUT_MS, pauseMs: EFFECT_POLL_MS },
-    ).catch(() => paletteRows(page));
-    const exact = rows.filter(isTitle);
-    if (exact.length === 0) {
-      const top = rows.slice(0, MAX_LISTED_ROWS).map(({ label }) => `  ${label}`);
-      throw new ActionError(
-        `no command is titled exactly "${title}"` +
-          (top.length > 0
-            ? `; the palette shows:\n${top.join('\n')}`
-            : '; the palette shows nothing'),
-      );
+    // The list filters as it is typed. If it settles without the title, show what is there.
+    const settled = await readSettled(page, title).catch(() => readPalette(page));
+    const pick = pickRow(settled.rows, title);
+    if (pick.kind === 'none') throw new ActionError(describeNoRow(title, pick.top));
+    if (pick.kind === 'several') {
+      throw new ActionError(`${pick.count} commands are titled "${title}"`);
     }
-    if (exact.length > 1) throw new ActionError(`${exact.length} commands are titled "${title}"`);
-    await focusRow(page, title);
-    await page.keyboard.press('Enter');
+    await runFocused(page, title);
     // The palette closes when the command runs. A command that asks for input keeps it open.
     await page
       .locator(QUICK_INPUT)

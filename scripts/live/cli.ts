@@ -3,50 +3,9 @@
 // Usage: npm run live -- <command>
 import { describeFailure } from '../vscode.mjs';
 import { parseLiveArgs, USAGE, UsageError, type LiveCommand } from './args.ts';
-import { click, key, runCommand, type } from './interact.ts';
-import { screenshot } from './screenshot.ts';
 import { status, stop } from './session.ts';
-import { snapshot } from './snapshot.ts';
 import { start } from './start.ts';
-import { connect, type Connection } from './vscode.ts';
-
-/** Commands that act on the window of the running session; they print one result. */
-async function act(command: LiveCommand, connection: Connection): Promise<string | undefined> {
-  switch (command.name) {
-    case 'screenshot':
-      return screenshot(connection, command.file);
-    case 'snapshot':
-      return snapshot(connection);
-    case 'click':
-      return click(connection, command.target);
-    case 'type':
-      return type(connection, command.text);
-    case 'key':
-      return key(connection, command.combo);
-    case 'command':
-      return runCommand(connection, command.title);
-    default:
-      return undefined;
-  }
-}
-
-const WINDOW_COMMANDS: readonly LiveCommand['name'][] = [
-  'screenshot',
-  'snapshot',
-  'click',
-  'type',
-  'key',
-  'command',
-];
-
-async function onWindow(command: LiveCommand): Promise<void> {
-  const connection = await connect();
-  try {
-    console.log(await act(command, connection));
-  } finally {
-    await connection.close().catch(() => undefined);
-  }
-}
+import { isWindowCommand, onWindow } from './window.ts';
 
 async function execute(command: LiveCommand): Promise<void> {
   switch (command.name) {
@@ -60,8 +19,8 @@ async function execute(command: LiveCommand): Promise<void> {
       status();
       return;
     default:
-      if (WINDOW_COMMANDS.includes(command.name)) {
-        await onWindow(command);
+      if (isWindowCommand(command)) {
+        console.log(await onWindow(command));
         return;
       }
       throw new Error(`${command.name} is not implemented yet`);
