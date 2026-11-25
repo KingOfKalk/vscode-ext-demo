@@ -53,7 +53,7 @@ Working on the code, as a person or an agent: see [AGENTS.md](AGENTS.md) and [CO
 - Watch the extension run in a browser: `npm run live -- start` in the dev container, then open the `noVNC:` URL it prints (port 6080, which the dev container forwards; the URL carries a token). `npm run live -- stop` ends it. Agents drive the same window, see [AGENTS.md](AGENTS.md). `LIVE_NOVNC_PORT` changes the port. If the session runs in a container whose port is published to the localhost of its host (a container inside the dev container), set `LIVE_NOVNC_HOST=0.0.0.0` there (any IP address). noVNC is then open to the network of that container; the token is its only protection.
 - Debug it yourself: press F5 ("Run Extension"). It starts the watch build and an Extension Development Host that opens the empty folder `.vscode-live/sandbox`; breakpoints in the TypeScript work through the source maps.
 
-If the Extension Development Host window closes at once after F5, press F5 again. It is a known race in VS Code's JavaScript debugger ([js-debug #2462](https://github.com/microsoft/vscode-js-debug/issues/2462)), not a problem of this repo. Setting `"debug.javascript.enableNetworkView": false` is reported to avoid it.
+If the Extension Development Host window closes at once after F5, press F5 again. The likely cause is a known race in VS Code's JavaScript debugger ([js-debug #2462](https://github.com/microsoft/vscode-js-debug/issues/2462)). Setting `"debug.javascript.enableNetworkView": false` is reported to avoid it.
 
 ## License
 
