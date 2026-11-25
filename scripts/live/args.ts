@@ -1,5 +1,6 @@
 // The command line of the live session: text in, a command out. Runs nothing.
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
+import { parseSettingValue, validateSettingKey } from './settings.ts';
 
 export type LiveCommand =
   | { name: 'start'; keep: boolean }
@@ -13,7 +14,7 @@ export type LiveCommand =
   | { name: 'key'; combo: string }
   | { name: 'command'; title: string }
   | { name: 'set'; setting: string; value: unknown }
-  | { name: 'logs' }
+  | { name: 'logs'; lines: number }
   | {
       name: 'break';
       file: string;
@@ -38,7 +39,7 @@ const USAGES: Record<Name, string> = {
   key: 'key <combo>',
   command: 'command <title>',
   set: 'set <setting> <json>',
-  logs: 'logs',
+  logs: 'logs [--lines N]',
   break: 'break <file:line> [--do <live command>] [--eval <expr>…]',
   eval: 'eval <expr>',
 };
@@ -98,10 +99,26 @@ function parseSet(args: readonly string[]): LiveCommand {
   const [setting, json, ...more] = args;
   if (!setting || json === undefined || more.length > 0) throw wrong('set');
   try {
-    return { name: 'set', setting, value: JSON.parse(json) as unknown };
-  } catch {
-    throw new UsageError(`${json} is not JSON; a text needs quotes of its own: '"text"'`);
+    validateSettingKey(setting);
+    return { name: 'set', setting, value: parseSettingValue(json) };
+  } catch (error) {
+    throw new UsageError(error instanceof Error ? error.message : String(error));
   }
+}
+
+/** How many lines of each log `logs` shows, if not told. */
+export const DEFAULT_LOG_LINES = 40;
+const MAX_LOG_LINES = 5000;
+
+function parseLogs(args: string[]): LiveCommand {
+  const { values } = parseOptions(args, { lines: { type: 'string' } }, false);
+  if (values.lines === undefined) return { name: 'logs', lines: DEFAULT_LOG_LINES };
+  if (!/^[1-9]\d*$/.test(values.lines)) {
+    throw new UsageError(`--lines takes a positive whole number, not "${values.lines}"`);
+  }
+  const lines = Number(values.lines);
+  if (lines > MAX_LOG_LINES) throw new UsageError(`--lines is at most ${MAX_LOG_LINES}`);
+  return { name: 'logs', lines };
 }
 
 function parseTrigger(text: string): LiveCommand {
@@ -160,7 +177,6 @@ export function parseLiveArgs(argv: string[]): LiveCommand {
     case 'status':
     case 'reload':
     case 'snapshot':
-    case 'logs':
       none(name, args);
       return { name };
     case 'screenshot':
@@ -175,6 +191,8 @@ export function parseLiveArgs(argv: string[]): LiveCommand {
       return { name, title: single(name, args) };
     case 'set':
       return parseSet(args);
+    case 'logs':
+      return parseLogs(args);
     case 'break':
       return parseBreak(args);
     case 'eval':

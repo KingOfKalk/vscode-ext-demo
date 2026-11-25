@@ -16,6 +16,7 @@ import {
   sessionState,
   TEMP,
   WORKSPACE,
+  type Session,
 } from './session.ts';
 
 const CACHE = process.env.VSCODE_TEST_CACHE ?? join(ROOT, '.vscode-test');
@@ -140,13 +141,19 @@ export interface Connection {
 
 /** Connects to the window of the running session. */
 export async function connect(): Promise<Connection> {
+  ownRunningSession();
+  return attach(15_000);
+}
+
+/** The session of this checkout, with VS Code running; throws if there is none. */
+export function ownRunningSession(): Session {
   const session = readSession();
   const vscode = session?.processes.find(({ name }) => name === 'vscode');
   if (!session || !vscode || sessionState(session) !== 'running' || !leaderRuns(vscode)) {
     throw new Error('no live session runs; start one: npm run live -- start');
   }
   assertOwnSession(session);
-  return attach(15_000);
+  return session;
 }
 
 /** Connects and waits until the window is ready: its status bar is visible. */

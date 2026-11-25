@@ -2,7 +2,16 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isActivated, listRuns, runLogs, selectRun } from '../../../scripts/live/logs.ts';
+import {
+  formatSection,
+  isActivated,
+  isNewActivation,
+  lastLines,
+  listRuns,
+  readActivations,
+  runLogs,
+  selectRun,
+} from '../../../scripts/live/logs.ts';
 
 const ID = 'kingofkalk.vscode-ext-demo';
 const ACTIVATED = '2026-11-25 06:37:43.100 [info] Extension activated, count 0\n';
@@ -86,5 +95,103 @@ describe('isActivated', () => {
       host: join(logs, '1/window1/exthost/exthost.log'),
     });
     expect(runLogs(logs, ['1'], ID)).toBeUndefined();
+  });
+});
+
+describe('lastLines', () => {
+  it('takes the last lines and drops a final newline', () => {
+    expect(lastLines('a\nb\nc\n', 2)).toEqual(['b', 'c']);
+    expect(lastLines('a\nb', 5)).toEqual(['a', 'b']);
+  });
+
+  it('has no lines for an empty text', () => {
+    expect(lastLines('', 5)).toEqual([]);
+    expect(lastLines('\n\n', 5)).toEqual([]);
+  });
+
+  it('keeps blank lines in the middle', () => {
+    expect(lastLines('a\n\nb\n', 3)).toEqual(['a', '', 'b']);
+  });
+
+  it('takes the number as it is, 0 gives nothing', () => {
+    expect(lastLines('a\nb', 0)).toEqual([]);
+  });
+});
+
+describe('formatSection', () => {
+  it('prints a title and the lines', () => {
+    expect(formatSection('Demo log', 'x/Demo.log', 'a\nb\nc\n', 2)).toBe(
+      '== Demo log (x/Demo.log, last 2 of 3 lines)\nb\nc',
+    );
+  });
+
+  it('says how many lines there are if all are shown', () => {
+    expect(formatSection('Demo log', 'x', 'a\nb\n', 40)).toBe('== Demo log (x, 2 lines)\na\nb');
+    expect(formatSection('Demo log', 'x', 'a\n', 40)).toBe('== Demo log (x, 1 line)\na');
+  });
+
+  it('says what is missing and which file it would be', () => {
+    expect(formatSection('Demo log', 'x/Demo.log', undefined, 40)).toBe(
+      '== Demo log: missing (x/Demo.log)',
+    );
+  });
+
+  it('says that an empty log is empty', () => {
+    expect(formatSection('Demo log', 'x', '', 40)).toBe('== Demo log: empty (x)');
+  });
+});
+
+describe('activations', () => {
+  const demo = (run: string) => `${run}/window1/exthost/${ID}/Demo.log`;
+  let logs: string;
+
+  beforeEach(() => {
+    logs = mkdtempSync(join(tmpdir(), 'logs-'));
+  });
+
+  afterEach(() => {
+    rmSync(logs, { recursive: true });
+  });
+
+  function write(file: string, text: string): void {
+    mkdirSync(dirname(join(logs, file)), { recursive: true });
+    writeFileSync(join(logs, file), text);
+  }
+
+  it('counts the activations of the newest run', () => {
+    expect(readActivations(join(logs, 'missing'), ID)).toEqual({ run: undefined, count: 0 });
+    write(demo('1'), ACTIVATED + ACTIVATED);
+    write(demo('2'), ACTIVATED);
+    expect(readActivations(logs, ID)).toEqual({
+      run: '2',
+      count: 1,
+      last: '2026-11-25 06:37:43.100 [info] Extension activated, count 0',
+    });
+  });
+
+  it('has a run without the Demo log', () => {
+    write('1/window1/exthost/exthost.log', '');
+    expect(readActivations(logs, ID)).toEqual({ run: '1', count: 0 });
+  });
+
+  const was = { run: '1', count: 1 };
+
+  it('sees a second activation in the same run: a reload keeps the run', () => {
+    expect(isNewActivation(was, { run: '1', count: 1 })).toBe(false);
+    expect(isNewActivation(was, { run: '1', count: 2 })).toBe(true);
+  });
+
+  it('sees an activation in a newer run', () => {
+    expect(isNewActivation(was, { run: '2', count: 0 })).toBe(false);
+    expect(isNewActivation(was, { run: '2', count: 1 })).toBe(true);
+  });
+
+  it('sees one if the log was made new and has fewer lines than before', () => {
+    expect(isNewActivation({ run: '1', count: 3 }, { run: '1', count: 1 })).toBe(true);
+    expect(isNewActivation({ run: '1', count: 3 }, { run: '1', count: 0 })).toBe(false);
+  });
+
+  it('takes the first activation after a start without one', () => {
+    expect(isNewActivation({ run: undefined, count: 0 }, { run: '1', count: 1 })).toBe(true);
   });
 });

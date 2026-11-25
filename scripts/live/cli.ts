@@ -3,7 +3,10 @@
 // Usage: npm run live -- <command>
 import { describeFailure } from '../vscode.mjs';
 import { parseLiveArgs, USAGE, UsageError, type LiveCommand } from './args.ts';
+import { reload } from './reload.ts';
+import { set } from './set.ts';
 import { status, stop } from './session.ts';
+import { showLogs } from './showLogs.ts';
 import { start } from './start.ts';
 import { isWindowCommand, onWindow } from './window.ts';
 
@@ -17,6 +20,15 @@ async function execute(command: LiveCommand): Promise<void> {
       return;
     case 'status':
       status();
+      return;
+    case 'reload':
+      console.log(await reload());
+      return;
+    case 'set':
+      console.log(await set(command.setting, command.value));
+      return;
+    case 'logs':
+      console.log(await showLogs(command.lines));
       return;
     default:
       if (isWindowCommand(command)) {

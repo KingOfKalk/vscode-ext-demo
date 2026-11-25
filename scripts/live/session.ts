@@ -26,6 +26,8 @@ export const HOME = join(RUN_DIR, 'home');
 export const TEMP = join(RUN_DIR, 'tmp');
 /** The output of the processes. */
 export const LOG_DIR = join(RUN_DIR, 'logs');
+/** The logs of VS Code, a directory per run. */
+export const VSCODE_LOGS = join(PROFILE, 'logs');
 export const VNC_SOCKET = join(RUN_DIR, 'vnc.sock');
 const SESSION_NAME = 'session.json';
 const TOKENS_NAME = 'novnc-tokens';

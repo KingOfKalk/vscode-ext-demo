@@ -39,7 +39,6 @@ import {
   ensureRunDir,
   LOG_DIR,
   NOVNC_TOKENS,
-  PROFILE,
   readSession,
   removeSession,
   ROOT,
@@ -47,6 +46,7 @@ import {
   sessionState,
   stopProcesses,
   VNC_SOCKET,
+  VSCODE_LOGS,
   type Session,
 } from './session.ts';
 import {
@@ -62,7 +62,6 @@ import {
 
 const NOVNC_FILES = '/usr/share/novnc';
 const SCREEN = '1440x900x24';
-const VSCODE_LOGS = join(PROFILE, 'logs');
 
 export async function start(keep: boolean): Promise<void> {
   const novnc = readNovncConfig(process.env);
