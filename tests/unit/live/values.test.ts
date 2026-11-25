@@ -3,7 +3,9 @@ import {
   cutLines,
   foldStack,
   formatPrimitive,
+  cutText,
   INSPECT,
+  MAX_TEXT,
   shorten,
   type InspectOptions,
 } from '../../../scripts/live/values.ts';
@@ -59,7 +61,7 @@ describe('INSPECT', () => {
     expect(show(Symbol('a'))).toBe('Symbol(a)');
   });
 
-  it('runs no getter, no toJSON, no custom inspection and no trap of a proxy', () => {
+  it('shows no value of a getter, and runs no toJSON, custom inspection or trap of a proxy', () => {
     const run = () => {
       throw new Error('ran');
     };
@@ -72,6 +74,22 @@ describe('INSPECT', () => {
       p: new Proxy({}, { get: run, ownKeys: run, getPrototypeOf: run }),
     };
     expect(show(value, 1, 1000)).toContain('a: [Getter]');
+  });
+
+  it('runs the getters that Node itself asks: the tag of an object and the stack of an error', () => {
+    class Tagged {
+      get [Symbol.toStringTag]() {
+        return 'Tag';
+      }
+    }
+    expect(show(new Tagged())).toContain('[Tag]');
+    const error = Object.defineProperty(new Error('a'), 'stack', { get: () => 'Error: b' });
+    expect(show(error)).toContain('Error: b');
+  });
+
+  it('never sends more than a limit, however large the value is', () => {
+    const huge = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`key${i}`, i]));
+    expect(show(huge)).toHaveLength(MAX_TEXT + 1);
   });
 
   it('cuts long lists and texts', () => {
@@ -99,6 +117,15 @@ describe('shorten', () => {
     ['0123456789x', 10, '012345678…'],
   ])('%j', (text, max, short) => {
     expect(shorten(text, max)).toBe(short);
+  });
+});
+
+describe('cutText', () => {
+  it('says that the rest is left out', () => {
+    expect(cutText('x'.repeat(MAX_TEXT))).toBe('x'.repeat(MAX_TEXT));
+    expect(cutText('x'.repeat(MAX_TEXT + 1))).toBe(
+      `${'x'.repeat(MAX_TEXT)}\n… cut after 20000 characters`,
+    );
   });
 });
 

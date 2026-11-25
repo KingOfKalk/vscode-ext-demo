@@ -7,7 +7,7 @@ import { ActionError, userError } from './errors.ts';
 import { InspectorError, type Inspector } from './inspector.ts';
 import type { GeneratedPosition } from './sourceMap.ts';
 
-const CLEANUP_TIMEOUT_MS = 5000;
+const CLEANUP_MS = 5000;
 const ASYNC_STACK_DEPTH = 8;
 
 export type Pause = Debugger.PausedEventDataType;
@@ -24,6 +24,8 @@ export interface PauseRequest {
   /** For `look`. */
   lookTimeoutMs: number;
   triggerTimeoutMs: number;
+  /** How long the process may take to continue and to say so. */
+  cleanupMs?: number;
   signal: AbortSignal;
   /** V8 says where the breakpoint is: the next place at which it can stop. */
   onSet?: (location: Debugger.Location) => void;
@@ -96,7 +98,7 @@ async function runWithin(timeoutMs: number, run: () => Promise<string>): Promise
 
 /**
  * Sets a breakpoint, starts the trigger, waits for the hit, lets `look` see it, and continues.
- * @returns what `look` returned, and the trigger, which may still be at work
+ * @returns what `look` returned, and the trigger, which may still be at work; the process continues then
  */
 export async function pauseAt<T>(
   inspector: Inspector,
@@ -104,6 +106,8 @@ export async function pauseAt<T>(
   look: (pause: Pause) => Promise<T>,
 ): Promise<{ seen: T; trigger: Promise<string> | undefined }> {
   const signal = AbortSignal.any([request.signal, inspector.closed]);
+  signal.throwIfAborted();
+  const cleanupMs = request.cleanupMs ?? CLEANUP_MS;
   let pause: Pause | undefined;
   let onHit: (event: Pause) => void = () => undefined;
   const hit = new Promise<Pause>((resolve) => {
@@ -118,8 +122,9 @@ export async function pauseAt<T>(
       pause = undefined;
     }),
   ];
-  let setting: Promise<Debugger.SetBreakpointByUrlReturnType> | undefined;
-  let pausedBefore = false;
+  let breakpointId: string | undefined;
+  /** The process was not paused when this debugger came, so every pause is to be continued. */
+  let checked = false;
   let trigger: Promise<string> | undefined;
   let triggered = '--do is still at work';
   const start = (): Promise<never> | undefined => {
@@ -137,19 +142,19 @@ export async function pauseAt<T>(
     await inspector.send('Debugger.setAsyncCallStackDepth', { maxDepth: ASYNC_STACK_DEPTH });
     // V8 tells about a pause that is there already.
     if (pause) {
-      pausedBefore = true;
       throw new ActionError(
         'the extension host is already paused, by another debugger: continue there first. If there is none (one was killed), start VS Code again: npm run live -- stop, then start --keep',
       );
     }
-    setting = inspector.send('Debugger.setBreakpointByUrl', {
+    checked = true;
+    const set = await inspector.send('Debugger.setBreakpointByUrl', {
       url: request.url,
       lineNumber: request.position.line,
       columnNumber: request.position.column,
     });
-    const { breakpointId, locations } = await setting;
+    breakpointId = set.breakpointId;
     signal.throwIfAborted();
-    const [location] = locations;
+    const [location] = set.locations;
     if (!location)
       throw new ActionError(`the running code has no place to stop at ${request.what}`);
     request.onSet?.(location);
@@ -167,16 +172,14 @@ export async function pauseAt<T>(
     );
     if (!(found.hitBreakpoints ?? []).includes(breakpointId)) {
       throw new OtherPauseError(
-        `the extension host paused, but not at the breakpoint at ${request.what} (${found.reason}): a debugger statement, or a breakpoint of another debugger; it continues`,
+        `the extension host paused, but not at the breakpoint at ${request.what} (${found.reason}): a debugger statement, or a breakpoint of another debugger`,
         found,
       );
     }
     const tooLong = timeLimit(
       request.lookTimeoutMs,
       () =>
-        new ActionError(
-          `looking at the pause took longer than ${request.lookTimeoutMs / 1000} s; the extension host continues`,
-        ),
+        new ActionError(`looking at the pause took longer than ${request.lookTimeoutMs / 1000} s`),
     );
     return Promise.race([lookAt(found), tooLong.over]).finally(tooLong.stop);
   };
@@ -191,63 +194,67 @@ export async function pauseAt<T>(
   };
 
   /**
-   * In this order nothing can pause in between: the answer to the first comes after a last hit.
-   * Also a pause that is not at the breakpoint: it came after this debugger, perhaps because of it.
+   * Sends everything at once, and only then waits: a process that is blocked takes it when it can, in
+   * this order, also if nobody waits for it any more. It also continues a pause that is not at the
+   * breakpoint: it came after this debugger, perhaps because of it.
    */
   const release = async (): Promise<void> => {
-    const set = await setting?.catch(() => undefined);
-    if (set) {
-      const { breakpointId } = set;
-      await inspector.send('Debugger.removeBreakpoint', { breakpointId }, CLEANUP_TIMEOUT_MS);
+    const answers: Promise<unknown>[] = [];
+    if (breakpointId !== undefined) {
+      answers.push(inspector.send('Debugger.removeBreakpoint', { breakpointId }, cleanupMs));
     }
-    if (pause && !pausedBefore) {
-      const resumed = inspector.next('Debugger.resumed', AbortSignal.timeout(CLEANUP_TIMEOUT_MS));
-      resumed.catch(() => undefined);
-      await inspector
-        .send('Debugger.resume', undefined, CLEANUP_TIMEOUT_MS)
-        .catch((error: unknown) => {
-          // Another debugger was faster.
-          if (!(error instanceof InspectorError && pause === undefined)) throw error;
-        });
-      if (pause as Pause | undefined) await resumed;
+    if (checked) {
+      const resuming = inspector.send('Debugger.resume', undefined, cleanupMs);
+      answers.push(
+        resuming.catch((error: unknown) => {
+          // "Can only perform operation while paused."
+          if (!(error instanceof InspectorError)) throw error;
+        }),
+      );
     }
-    await inspector.send('Debugger.disable', undefined, CLEANUP_TIMEOUT_MS);
+    answers.push(inspector.send('Debugger.disable', undefined, cleanupMs));
+    // Answered by the event loop, so it runs again.
+    if (checked) answers.push(turnEventLoop(inspector, cleanupMs));
+    await Promise.all(answers);
   };
 
+  const outcome = await unlessAborted(signal, run()).then(
+    (seen) => ({ seen }),
+    (error: unknown) => ({ error }),
+  );
+  const wasPaused = checked && pause !== undefined;
+  let note = wasPaused ? 'The extension host continues.' : undefined;
+  let released = true;
   try {
-    const seen = await unlessAborted(signal, run());
     await release();
-    return { seen, trigger };
   } catch (error) {
-    // A failing trigger was told, or comes too late to matter.
-    trigger?.catch(() => undefined);
-    try {
-      await release();
-    } catch (releaseError) {
-      // The end of the connection is the last chance: V8 drops the breakpoint then.
-      const ended = inspector.closed.aborted;
-      inspector.close();
-      if (!ended) {
-        throw new ActionError(
-          `${userError(error).message}\nAnd the extension host may still be paused (${userError(releaseError).message}). If it is: npm run live -- stop, then start --keep`,
-        );
-      }
-    }
-    throw error;
-  } finally {
-    for (const stop of stopListening) stop();
+    released = false;
+    note = inspector.closed.aborted
+      ? undefined
+      : `It is not known whether the extension host continues (${userError(error).message}). It was told to, and does when nothing blocks it any more. If the window stays frozen: npm run live -- stop, then start --keep`;
+    inspector.close();
   }
+  for (const stop of stopListening) stop();
+
+  if ('seen' in outcome && released) return { seen: outcome.seen, trigger };
+  // A failing trigger was told, or comes too late to matter.
+  trigger?.catch(() => undefined);
+  if ('seen' in outcome) throw new ActionError(note ?? userError(inspector.closed.reason).message);
+  const { error } = outcome;
+  if (note !== undefined && error instanceof Error) error.message += `\n${note}`;
+  throw error;
 }
 
-/** Throws if the process does not run its event loop. */
-export async function assertContinues(inspector: Inspector): Promise<void> {
+/** Waits until the process ran its event loop, which it does not if it is paused or busy. */
+export async function turnEventLoop(inspector: Inspector, timeoutMs: number): Promise<void> {
   await inspector.send(
     'Runtime.evaluate',
     {
       expression: 'new Promise((resolve) => setTimeout(resolve, 0))',
       awaitPromise: true,
       disableBreaks: true,
+      silent: true,
     },
-    CLEANUP_TIMEOUT_MS,
+    timeoutMs,
   );
 }

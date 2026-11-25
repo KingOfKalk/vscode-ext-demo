@@ -17,6 +17,8 @@ export interface Commands {
   'NodeRuntime.notifyWhenWaitingForDisconnect': [{ enabled: boolean }, unknown];
   'Debugger.enable': [undefined, unknown];
   'Debugger.disable': [undefined, unknown];
+  'Debugger.setSkipAllPauses': [Debugger.SetSkipAllPausesParameterType, unknown];
+  'Runtime.terminateExecution': [undefined, unknown];
   'Debugger.pause': [undefined, unknown];
   'Debugger.resume': [undefined, unknown];
   'Debugger.setAsyncCallStackDepth': [Debugger.SetAsyncCallStackDepthParameterType, unknown];
@@ -116,7 +118,7 @@ export class Inspector {
     });
   }
 
-  static async connect(url: string): Promise<Inspector> {
+  static async connect(url: string, timeoutMs = CONNECT_TIMEOUT_MS): Promise<Inspector> {
     const socket = new WebSocket(url);
     const inspector = new Inspector(socket);
     await new Promise<void>((resolve, reject) => {
@@ -125,7 +127,7 @@ export class Inspector {
         reject(new ActionError('cannot connect to the debugger of the extension host'));
         socket.close();
       };
-      const timer = setTimeout(fail, CONNECT_TIMEOUT_MS);
+      const timer = setTimeout(fail, timeoutMs);
       socket.addEventListener('error', fail);
       socket.addEventListener('open', () => {
         clearTimeout(timer);
@@ -136,7 +138,13 @@ export class Inspector {
     inspector.#events.once('NodeRuntime.waitingForDisconnect', () => {
       inspector.close();
     });
-    await inspector.send('NodeRuntime.notifyWhenWaitingForDisconnect', { enabled: true });
+    try {
+      const method = 'NodeRuntime.notifyWhenWaitingForDisconnect';
+      await inspector.send(method, { enabled: true }, timeoutMs);
+    } catch (error) {
+      inspector.close();
+      throw error;
+    }
     return inspector;
   }
 

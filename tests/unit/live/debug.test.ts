@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeNoHit,
   describePlace,
   describeStack,
   formatReport,
@@ -89,6 +90,7 @@ describe('formatReport', () => {
           { name: 'this', text: 'Counter { value: 0 }' },
           { name: 'next', text: '2' },
         ],
+        moreLocals: 0,
         values: [
           { name: 'this.value', text: '0', outcome: 'value' },
           { name: 'this.x.y', text: 'TypeError: no\n    at grow', outcome: 'threw' },
@@ -116,6 +118,19 @@ describe('formatReport', () => {
     );
   });
 
+  it('says how many locals are left out', () => {
+    const text = formatReport({
+      where: 'src/a.ts:3:5',
+      reason: 'breakpoint',
+      stack: [],
+      frame: 'grow',
+      locals: [{ name: 'a', text: '1' }],
+      moreLocals: 2,
+      values: [],
+    });
+    expect(text).toContain('  a = 1\n  … 2 more locals');
+  });
+
   it('says that there are no locals, and has no empty part', () => {
     const text = formatReport({
       where: 'src/a.ts:3:5',
@@ -123,6 +138,7 @@ describe('formatReport', () => {
       stack: ['grow (src/a.ts:3:5)'],
       frame: 'grow',
       locals: [],
+      moreLocals: 0,
       values: [],
     });
     expect(text).toContain('Locals of grow: none');
@@ -155,5 +171,15 @@ describe('describePlace', () => {
     expect(() => describePlace('src/a.ts', 3, place, generated)).toThrow(
       `there is no place to stop at src/a.ts:3 or after it in its file (the next one is ${next})`,
     );
+  });
+});
+
+describe('describeNoHit', () => {
+  it('names the causes, among them a callback on the line of a call', () => {
+    const text = describeNoHit('src/a.ts:3: no hit within 15 s', true);
+    expect(text).toMatch(/^src\/a\.ts:3: no hit within 15 s\. The breakpoint is removed/);
+    expect(text).toContain('what --do did does not lead there');
+    expect(text).toContain('a callback that is on the same line as the call it is passed to');
+    expect(describeNoHit('x', false)).toContain('pass a trigger with --do');
   });
 });

@@ -8,14 +8,7 @@ import { ActionError } from './errors.ts';
 import { evaluateExpression, evaluateInFrame, type FrameEvaluation } from './evaluate.ts';
 import { Inspector, inspectorUrl } from './inspector.ts';
 import { INSPECT_PORT } from './novnc.ts';
-import {
-  assertContinues,
-  NoHitError,
-  OtherPauseError,
-  pauseAt,
-  unlessAborted,
-  type Pause,
-} from './pause.ts';
+import { NoHitError, OtherPauseError, pauseAt, unlessAborted, type Pause } from './pause.ts';
 import { ROOT } from './session.ts';
 import { set } from './set.ts';
 import {
@@ -26,15 +19,20 @@ import {
   type GeneratedPosition,
   type SourcePosition,
 } from './sourceMap.ts';
-import { countFrames, cutLines, foldStack, formatRemote, shorten } from './values.ts';
+import { countFrames, cutLines, foldStack, formatRemote, MAX_TEXT, shorten } from './values.ts';
 import { installedDir, ownRunningSession } from './vscode.ts';
 import { onWindow } from './window.ts';
 
 const HIT_TIMEOUT_MS = 15_000;
 /** Its own: the hit may come long before the trigger has ended, or after it. */
 const TRIGGER_TIMEOUT_MS = 20_000;
-// VS Code takes an extension host for hung if it does not answer for 3 s, and attaches a profiler that
-// keeps it from continuing without its debugger. So nothing here blocks it for that long.
+// VS Code takes an extension host for hung if it does not answer for 3 s, and attaches a profiler. If
+// the host is paused then, the profiler never leaves, and V8 does not continue by itself any more when
+// its debugger is killed. The limits of a pause keep JavaScript below that. They cannot end native code:
+// an expression like `execSync('sleep 8')` blocks the host until it returns, and then it continues.
+// `eval` does not pause; what blocks the host after an `await` is ended when the result is late.
+// Expressions can read what the extension host can: `process.env` prints the environment of the session,
+// where `sessionEnv` leaves out only what is named like a credential.
 const EVAL_TIMEOUT_MS = 2000;
 const EVAL_ANSWER_MS = 10_000;
 /** In a pause: for all expressions together, and for everything. */
@@ -110,12 +108,22 @@ export interface Report {
   /** Name of the top frame. */
   frame: string;
   locals: { name: string; text: string }[];
+  /** How many are not shown. */
+  moreLocals: number;
   values: ({ name: string } & FrameEvaluation)[];
 }
 
 const VERBS = { value: ' =', threw: ' threw', ended: ':' };
 
-export function formatReport({ where, reason, stack, frame, locals, values }: Report): string {
+export function formatReport({
+  where,
+  reason,
+  stack,
+  frame,
+  locals,
+  moreLocals,
+  values,
+}: Report): string {
   const indent = (text: string) => text.replaceAll('\n', '\n  ');
   return [
     `Paused at ${where} (${reason})`,
@@ -123,6 +131,7 @@ export function formatReport({ where, reason, stack, frame, locals, values }: Re
     ...stack.map((line) => `  ${line}`),
     locals.length > 0 ? `Locals of ${frame}:` : `Locals of ${frame}: none`,
     ...locals.map(({ name, text }) => `  ${name} = ${text}`),
+    ...(moreLocals > 0 ? [`  … ${moreLocals} more local${moreLocals === 1 ? '' : 's'}`] : []),
     ...(values.length > 0 ? ['Evaluated:'] : []),
     ...values.map(({ name, text, outcome }) => `  ${name}${VERBS[outcome]} ${indent(text)}`),
   ].join('\n');
@@ -147,6 +156,19 @@ export function describePlace(
   }
   const shifted = source.line === line ? '' : `, the next place to stop after line ${line}`;
   return `${formatPosition(source)} (${inBundle}${shifted})`;
+}
+
+export function describeNoHit(message: string, hasTrigger: boolean): string {
+  const trigger = hasTrigger
+    ? 'what --do did does not lead there'
+    : 'nothing made it run; pass a trigger with --do';
+  return [
+    `${message}. The breakpoint is removed. Possible causes:`,
+    `  the line did not run: ${trigger}`,
+    '  the code runs somewhere else: another line or file, or only once, when the extension activates',
+    '  it is a callback that is on the same line as the call it is passed to: break stops at the call, never in it',
+    `  the window is not connected to the extension host any more, or runs a stale build; ${RELOAD}`,
+  ].join('\n');
 }
 
 function formatGenerated({ line, column }: GeneratedPosition): string {
@@ -215,6 +237,17 @@ async function loadedScript(inspector: Inspector, url: string, { text }: Bundle)
   }
 }
 
+/** Aborted by a signal that asks this process to end; it does not end by itself then. */
+function interruption(): AbortSignal {
+  const abort = new AbortController();
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(signal, () => {
+      abort.abort(new ActionError(`interrupted by ${signal}`));
+    });
+  }
+  return abort.signal;
+}
+
 async function withInspector<T>(use: (inspector: Inspector) => Promise<T>): Promise<T> {
   const inspector = await Inspector.connect(await inspectorUrl(INSPECT_PORT));
   try {
@@ -228,14 +261,16 @@ async function withInspector<T>(use: (inspector: Inspector) => Promise<T>): Prom
 export async function evaluate(expression: string): Promise<string> {
   ownRunningSession();
   const requireFrom = join(installedDir(), BUNDLE);
+  const signal = interruption();
   const { ok, text } = await withInspector((inspector) =>
     evaluateExpression(inspector, expression, {
       timeoutMs: EVAL_TIMEOUT_MS,
       answerMs: EVAL_ANSWER_MS,
       requireFrom,
+      signal,
     }),
   );
-  const shown = cutLines(foldStack(inTypeScript(text)), MAX_LINES, 10_000);
+  const shown = cutLines(foldStack(inTypeScript(text)), MAX_LINES, MAX_TEXT);
   if (!ok) throw new ActionError(`the expression threw ${shown}`);
   return shown;
 }
@@ -264,7 +299,8 @@ async function inspectPause(
 
   const locals: Report['locals'] = [];
   if (top.this.type !== 'undefined') locals.push({ name: 'this', text: await show(top.this) });
-  for (const { name, value } of await readLocals(inspector, top)) {
+  const variables = await readLocals(inspector, top);
+  for (const { name, value } of variables.slice(0, MAX_LOCALS)) {
     signal.throwIfAborted();
     locals.push({ name, text: value ? await show(value) : '(no value yet)' });
   }
@@ -301,6 +337,7 @@ async function inspectPause(
     stack,
     frame: nameOf(top),
     locals,
+    moreLocals: Math.max(0, variables.length - MAX_LOCALS),
     values,
   };
 }
@@ -336,7 +373,7 @@ async function readLocals(
     // An inner variable hides an outer one of the same name.
     for (const local of result) if (!found.has(local.name)) found.set(local.name, local);
   }
-  return [...found.values()].slice(0, MAX_LOCALS);
+  return [...found.values()];
 }
 
 async function runTrigger(trigger: Trigger): Promise<string> {
@@ -355,12 +392,7 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
   const position = toGenerated(bundle.map, file, line);
   assertUnchanged(bundle, file);
 
-  const abort = new AbortController();
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-    process.on(signal, () => {
-      abort.abort(new ActionError(`interrupted by ${signal}`));
-    });
-  }
+  const signal = interruption();
 
   await withInspector(async (inspector) => {
     const url = pathToFileURL(bundle.file).href;
@@ -373,7 +405,7 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
         ? formatPosition(source)
         : formatGenerated({ line: lineNumber, column: columnNumber });
     };
-    const look = { bundle, locate, expressions, signal: abort.signal };
+    const look = { bundle, locate, expressions, signal };
     const { seen, trigger: triggered } = await pauseAt(
       inspector,
       {
@@ -384,7 +416,7 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
         hitTimeoutMs: HIT_TIMEOUT_MS,
         lookTimeoutMs: LOOK_TIMEOUT_MS,
         triggerTimeoutMs: TRIGGER_TIMEOUT_MS,
-        signal: abort.signal,
+        signal,
         onSet: (location) => {
           const { lineNumber, columnNumber } = at(location);
           const source = toSource(bundle.map, lineNumber, columnNumber);
@@ -403,19 +435,11 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
         throw new ActionError(`${error.message}${where ? `\nIt paused at ${where}` : ''}`);
       }
       if (!(error instanceof NoHitError)) throw error;
-      throw new ActionError(
-        [
-          `${error.message}. The breakpoint is removed. Possible causes:`,
-          `  the line did not run: ${trigger ? 'what --do did does not lead there' : 'nothing made it run; pass a trigger with --do'}`,
-          '  the code runs somewhere else: another line or file, or only once, when the extension activates',
-          `  the window is not connected to the extension host any more, or runs a stale build; ${RELOAD}`,
-        ].join('\n'),
-      );
+      throw new ActionError(describeNoHit(error.message, trigger !== undefined));
     });
     console.log(formatReport(seen));
-    await assertContinues(inspector);
     console.log('Continued.');
-    if (triggered) console.log(`--do: ${await unlessAborted(abort.signal, triggered)}`);
+    if (triggered) console.log(`--do: ${await unlessAborted(signal, triggered)}`);
     const failed = seen.values.filter(({ outcome }) => outcome !== 'value').length;
     if (failed > 0) throw new ActionError(`${failed} of ${seen.values.length} --eval failed`);
   });

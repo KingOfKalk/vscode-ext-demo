@@ -3,6 +3,7 @@ import { build } from 'esbuild';
 import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createConnection, createServer, type AddressInfo, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -11,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vites
 import { ActionError } from '../../../scripts/live/errors.ts';
 import { evaluateExpression, evaluateInFrame } from '../../../scripts/live/evaluate.ts';
 import { Inspector } from '../../../scripts/live/inspector.ts';
-import { assertContinues, pauseAt, type PauseRequest } from '../../../scripts/live/pause.ts';
+import { pauseAt, type Pause, type PauseRequest } from '../../../scripts/live/pause.ts';
 import { toGenerated, toSource } from '../../../scripts/live/sourceMap.ts';
 
 const SOURCE = `class Counter {
@@ -114,6 +115,14 @@ function triggerBy(child: ChildProcess, text = 'increment'): () => Promise<strin
 
 const never = () => new Promise<never>(() => undefined);
 
+/** Blocks the paused process in native code, which no timeout of the inspector can end. */
+async function block(inspector: Inspector, { callFrames }: Pause, ms: number): Promise<void> {
+  await inspector.send('Debugger.evaluateOnCallFrame', {
+    callFrameId: callFrames[0]?.callFrameId ?? '',
+    expression: `process.getBuiltinModule('node:child_process').execSync('sleep ${ms / 1000}')`,
+  });
+}
+
 describe('pauseAt', () => {
   it('pauses once, resumes, and leaves no breakpoint', async () => {
     const { child, url } = await startChild();
@@ -135,7 +144,6 @@ describe('pauseAt', () => {
     );
     expect(seen).toMatchObject({ value: '0,2', at: { file: 'child.ts', line: 5 } });
     await expect(trigger).resolves.toBe('sent increment');
-    await assertContinues(inspector);
     expect((await answer)[0]).toBe(2);
     expect(await increment(child)).toBe(4);
   });
@@ -232,6 +240,55 @@ describe('pauseAt', () => {
     ).rejects.toThrow('cannot look');
     expect((await answer)[0]).toBe(2);
     expect(await increment(child)).toBe(4);
+  });
+
+  it('continues after a block that outlasts the cleanup, also if another debugger is attached', async () => {
+    const { child, url } = await startChild();
+    await (await connect(url)).send('Debugger.enable');
+    const inspector = await connect(url);
+    const answer = once(child, 'message');
+    const pausing = pauseAt(
+      inspector,
+      request(5, { trigger: triggerBy(child), lookTimeoutMs: 100, cleanupMs: 200 }),
+      (pause) => block(inspector, pause, 1500),
+    );
+    // It is not known yet that it continues, so it does not say so.
+    const error = await pausing.catch((reason: unknown) => reason as Error);
+    expect(error).toBeInstanceOf(ActionError);
+    expect((error as Error).message).toContain('longer than 0.1 s');
+    expect((error as Error).message).toContain('gave no answer within 0.2 s');
+    expect((error as Error).message).not.toContain('continues.');
+    expect((await answer)[0]).toBe(2);
+    expect(await increment(child)).toBe(4);
+  });
+
+  it('says that the process continues once that is known', async () => {
+    const { child, url } = await startChild();
+    const inspector = await connect(url);
+    await expect(
+      pauseAt(
+        inspector,
+        request(5, { trigger: triggerBy(child), lookTimeoutMs: 100, cleanupMs: 3000 }),
+        (pause) => block(inspector, pause, 500),
+      ),
+    ).rejects.toThrow('longer than 0.1 s\nThe extension host continues.');
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('does nothing if it is interrupted before', async () => {
+    const { child, url } = await startChild();
+    const abort = new AbortController();
+    abort.abort(new Error('interrupted by SIGINT'));
+    let set = false;
+    await expect(
+      pauseAt(
+        await connect(url),
+        request(5, { signal: abort.signal, onSet: () => void (set = true) }),
+        never,
+      ),
+    ).rejects.toThrow('interrupted by SIGINT');
+    expect(set).toBe(false);
+    expect(await increment(child)).toBe(2);
   });
 
   it('continues when the connection breaks during the pause', async () => {
@@ -331,6 +388,35 @@ describe('pauseAt', () => {
   });
 });
 
+describe('Inspector.connect', () => {
+  it('closes the connection if the process does not answer', async () => {
+    const { url } = await startChild();
+    const inspector = await connect(url);
+    // In between, to see whether the connection stays.
+    const { port, hostname } = new URL(url);
+    const proxy = createServer((socket) => {
+      const through = createConnection(Number(port), hostname);
+      socket.pipe(through).pipe(socket);
+    }).listen(0, '127.0.0.1');
+    onTestFinished(() => void proxy.close());
+    await once(proxy, 'listening');
+    const client = once(proxy, 'connection') as Promise<[Socket]>;
+    const address = new URL(url);
+    address.port = String((proxy.address() as AddressInfo).port);
+
+    // Blocked: the thread of the inspector takes the connection, but nothing answers.
+    await inspector.send('Runtime.evaluate', {
+      expression: `setTimeout(() => process.getBuiltinModule('node:child_process').execSync('sleep 2'), 0)`,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const connecting = Inspector.connect(address.href, 200);
+    const [socket] = await client;
+    const closed = once(socket, 'close', { signal: AbortSignal.timeout(1000) });
+    await expect(connecting).rejects.toThrow('no answer within 0.2 s');
+    await closed;
+  });
+});
+
 describe('evaluateInFrame', () => {
   it('ends a loop without an end, and the function goes on', async () => {
     const { child, url } = await startChild();
@@ -399,8 +485,106 @@ describe('evaluateExpression', () => {
     await expect(evaluate('(() => { for (;;); })()')).rejects.toThrow('longer than 0.5 s');
   });
 
-  it('does not wait forever for a promise', async () => {
-    await expect(evaluate('new Promise(() => undefined)')).rejects.toThrow('no result within 1 s');
+  it.each([
+    ['after an await', '(await null, (() => { for (;;); })())'],
+    ['of awaits', '(await (async () => { for (;;) await null; })())'],
+  ])('ends a loop without an end %s', async (_, expression) => {
+    const { child, url } = await startChild();
+    const options = { timeoutMs: 300, answerMs: 500 };
+    await expect(evaluateExpression(await connect(url), expression, options)).rejects.toThrow(
+      'no result within 0.5 s. The expression blocked the extension host and was ended.',
+    );
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('says that the process ended with a loop in a timer', async () => {
+    const { url } = await startChild();
+    const options = { timeoutMs: 300, answerMs: 500 };
+    const expression = 'new Promise(() => setTimeout(() => { for (;;); }, 50))';
+    await expect(evaluateExpression(await connect(url), expression, options)).rejects.toThrow(
+      'and the extension host with it',
+    );
+  });
+
+  it('says that native code blocks, which nothing ends', { timeout: 10_000 }, async () => {
+    const { child, url } = await startChild();
+    const options = { timeoutMs: 100, answerMs: 200 };
+    const expression = `(await null, require('node:child_process').execSync('sleep 4') + '')`;
+    await expect(evaluateExpression(await connect(url), expression, options)).rejects.toThrow(
+      'blocked by native code',
+    );
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('waits for a promise that is slow, not busy', { timeout: 10_000 }, async () => {
+    const { child, url } = await startChild();
+    const result = await evaluateExpression(
+      await connect(url),
+      'new Promise((resolve) => setTimeout(() => resolve(1), 3000))',
+      { timeoutMs: 500, answerMs: 6000 },
+    );
+    expect(result).toEqual({ ok: true, text: '1' });
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('does not wait forever for a promise, and ends nothing else', async () => {
+    const { child, url } = await startChild();
+    const options = { timeoutMs: 500, answerMs: 1000 };
+    await expect(
+      evaluateExpression(await connect(url), 'new Promise(() => undefined)', options),
+    ).rejects.toThrow('no result within 1 s. The promise did not settle.');
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('ends a loop after an await when it is interrupted', async () => {
+    const { child, url } = await startChild();
+    const inspector = await connect(url);
+    const abort = new AbortController();
+    const evaluating = evaluateExpression(inspector, '(await null, (() => { for (;;); })())', {
+      timeoutMs: 60_000,
+      answerMs: 60_000,
+      signal: abort.signal,
+    });
+    setTimeout(() => {
+      abort.abort(new ActionError('interrupted by SIGINT'));
+    }, 200);
+    await expect(evaluating).rejects.toThrow(
+      'interrupted by SIGINT. The expression blocked the extension host and was ended.',
+    );
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('ends nothing when it is interrupted while the process is idle', async () => {
+    const { child, url } = await startChild();
+    const abort = new AbortController();
+    const evaluating = evaluateExpression(await connect(url), 'new Promise(() => undefined)', {
+      timeoutMs: 60_000,
+      answerMs: 60_000,
+      signal: abort.signal,
+    });
+    setTimeout(() => {
+      abort.abort(new ActionError('interrupted by SIGINT'));
+    }, 200);
+    await expect(evaluating).rejects.toThrow('interrupted by SIGINT');
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('ends nothing in a process that another debugger paused', async () => {
+    const { child, url } = await startChild();
+    const other = await connect(url);
+    await other.send('Debugger.enable');
+    const paused = other.next('Debugger.paused', AbortSignal.timeout(3000));
+    await other.send('Debugger.pause');
+    const answer = once(child, 'message');
+    child.send('increment');
+    await paused;
+    const options = { timeoutMs: 300, answerMs: 500 };
+    await expect(
+      evaluateExpression(await connect(url), 'Promise.resolve(1)', options),
+    ).rejects.toThrow('paused by another debugger');
+    await other.send('Debugger.resume');
+    expect((await answer)[0]).toBe(2);
+    expect(await increment(child)).toBe(4);
   });
 
   it('does not stop at `debugger`, also if a debugger is attached', async () => {

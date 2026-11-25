@@ -302,7 +302,7 @@ async function describeOverlay(page: Page): Promise<string | undefined> {
     .locator('.dialog-message-container')
     .innerText({ timeout: 1000 })
     .catch(() => '');
-  return `a dialog lies over the window${text ? ` ("${text}")` : ''}; answer it first, or close it: key Escape`;
+  return `a dialog lies over the window${text ? ` ("${oneLine(text)}")` : ''}; answer it first, or close it: key Escape`;
 }
 
 /** Throws if something lies over the window (Settings opens like this): the palette does not open then. */

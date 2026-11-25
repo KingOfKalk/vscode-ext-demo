@@ -10,9 +10,13 @@ export interface InspectOptions {
   width: number | null;
 }
 
+/** Characters of the text of one value. */
+export const MAX_TEXT = 20_000;
+
 /**
- * Runs in the extension host, with the value as `this`. Runs no code of the value itself: no getter,
- * no proxy trap, no custom inspection.
+ * Runs in the extension host, with the value as `this`. It shows getters without asking them, and
+ * runs no `toJSON`, custom inspection or proxy trap. It does run what Node itself asks to name a value:
+ * `Symbol.toStringTag`, and the `stack` of an error. The text is cut there, so a huge value stays there.
  */
 export const INSPECT = `function (options) {
   'use strict';
@@ -23,7 +27,7 @@ export const INSPECT = `function (options) {
     customInspect: false,
     showProxy: true,
     maxStringLength: 1000,
-  });
+  }).slice(0, ${MAX_TEXT + 1});
 }`;
 
 type Primitive = Pick<
@@ -58,7 +62,14 @@ export async function formatRemote(
     return remote.description ?? remote.type;
   }
   // An error without a stack comes in brackets.
-  return remote.subtype === 'error' ? result.value.replace(/^\[(.*)\]$/s, '$1') : result.value;
+  const text = cutText(result.value);
+  return remote.subtype === 'error' ? text.replace(/^\[(.*)\]$/s, '$1') : text;
+}
+
+/** At most `MAX_TEXT` characters. */
+export function cutText(text: string): string {
+  if (text.length <= MAX_TEXT) return text;
+  return `${text.slice(0, MAX_TEXT)}\n… cut after ${MAX_TEXT} characters`;
 }
 
 /** "… 3 frames of VS Code or Node" */
