@@ -71,7 +71,7 @@ All four are required. Each installs with `npm ci --ignore-scripts`, so a depend
 [release-please](https://github.com/googleapis/release-please-action) ([`release-please.yml`](.github/workflows/release-please.yml)) keeps a release PR (`chore(main): release X.Y.Z`) up to date on every push to `main`: the version bump and `CHANGELOG.md`. The first release is `0.1.0`.
 
 - Merging the release PR (squash, title unchanged) tags `vX.Y.Z` and creates the GitHub release.
-- The workflow then checks that `package.json` matches the tag, packages, checks (`check:vsix`) and smoke-tests the `.vsix`, and attaches `vscode-ext-demo-X.Y.Z.vsix` to the release. It does not run `npm run check`: the tree passed the required checks, and the tools are auto-merged. A rerun of the workflow adds a missing file.
+- The workflow then checks that `package.json` matches the tag, packages, checks (`check:vsix`) and smoke-tests the `.vsix`, and attaches `vscode-ext-demo-X.Y.Z.vsix` to the release. That job must not run the auto-merged tools: it has no `npm run check` (the tree passed the required checks) and calls the scripts with `node`, not with `npm run` or `npx`. A rerun of the workflow adds a missing file.
 - Nothing is published to a marketplace. Users install the `.vsix` by hand.
 - Do not tag, bump versions or edit `CHANGELOG.md` by hand.
 - The workflows use a GitHub App (secrets `RELEASE_APP_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`), so that release PRs and auto-merges start the other workflows.
