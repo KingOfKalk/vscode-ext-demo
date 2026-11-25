@@ -324,7 +324,7 @@ describe('describeSessionProblem', () => {
 
   it('says to stop, then start, if VS Code ended but the rest of the session runs', () => {
     expect(describeSessionProblem(session, 'running', false)).toBe(
-      'VS Code of the live session has ended, the rest of it still runs; stop, then start: npm run live -- stop, then npm run live -- start',
+      'VS Code of the live session has ended, the rest of it still runs; run `npm run live -- stop`, then `npm run live -- start`',
     );
   });
 });
@@ -338,7 +338,7 @@ describe('describeAlreadyRunning', () => {
 
   it('says to stop, then start, if VS Code of it ended', () => {
     expect(describeAlreadyRunning(false)).toBe(
-      'a live session is already running, but its VS Code has ended; stop, then start: npm run live -- stop, then npm run live -- start',
+      'a live session is already running, but its VS Code has ended; run `npm run live -- stop`, then `npm run live -- start`',
     );
   });
 });

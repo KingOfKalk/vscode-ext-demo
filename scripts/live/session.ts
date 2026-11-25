@@ -142,7 +142,7 @@ export function sessionState(session: Session): 'starting' | 'running' | 'gone' 
 
 /** For a command that needs a session when there is none. */
 export const NO_SESSION = 'no live session runs; start one: npm run live -- start';
-const STOP_THEN_START = 'stop, then start: npm run live -- stop, then npm run live -- start';
+const STOP_THEN_START = 'run `npm run live -- stop`, then `npm run live -- start`';
 
 /**
  * Why a command that needs VS Code of the session cannot go on; undefined if it can.

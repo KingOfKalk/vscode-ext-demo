@@ -6,15 +6,15 @@ import { join } from 'node:path';
 import {
   explainNoActivation,
   markLog,
-  readActivationState,
+  ActivationWatch,
   type ActivationSource,
   type NoActivation,
 } from './activation.ts';
 import { sessionEnv } from './environment.ts';
 import { ActionError, guard, userError } from './errors.ts';
 import { assertNoOverlay, runCommand } from './interact.ts';
-import { isNewActivation, readActivations, runLogs, decideActivation } from './logs.ts';
-import { waitFor } from './processes.ts';
+import { isNewActivation, noActivationKind, readActivations, runLogs } from './logs.ts';
+import { ignoreTimeout, waitFor } from './processes.ts';
 import { PROFILE, ROOT, VSCODE_LOGS, vscodeOfSessionRuns } from './session.ts';
 import {
   attach,
@@ -154,21 +154,21 @@ export async function reload(): Promise<string> {
       };
       await guard('cannot reload the window', () => runCommand(open, RELOAD_COMMAND));
       // The first event ends the wait; the time limit is only for a hang, where none comes.
+      const watch = new ActivationWatch(source);
       const outcome = await waitFor(
-        () => 'the extension activates again',
+        'the extension activates again',
         () => {
-          const { state } = readActivationState(source);
-          const decision = decideActivation(state);
+          const { decision, state } = watch.poll();
           return decision === undefined ? undefined : { decision, state };
         },
         { timeoutMs: ACTIVATION_TIMEOUT_MS },
-      ).catch(() => undefined);
+      ).catch(ignoreTimeout);
       if (outcome?.decision !== 'activated') {
-        const why: NoActivation = !outcome
-          ? { kind: 'timeout', seconds: ACTIVATION_TIMEOUT_MS / 1000 }
-          : {
-              kind: outcome.state.failed ? 'failed' : outcome.state.vscodeEnded ? 'vscode' : 'host',
-            };
+        const kind = outcome === undefined ? undefined : noActivationKind(outcome.state);
+        const why: NoActivation =
+          kind === undefined
+            ? { kind: 'timeout', seconds: ACTIVATION_TIMEOUT_MS / 1000 }
+            : { kind };
         throw new ActionError(explainNoActivation(why, source, PROFILE));
       }
       const now = readActivations(VSCODE_LOGS, id);

@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   completeLines,
   decideActivation,
+  HOST_RESTART_GRACE_MS,
+  noActivationKind,
   formatSection,
   hasActivationFailed,
   hasHostTerminated,
@@ -365,7 +367,12 @@ describe('completeLines and linesAfter', () => {
 });
 
 describe('decideActivation', () => {
-  const none = { activated: false, failed: false, vscodeEnded: false, hostEnded: false };
+  const none = {
+    activated: false,
+    failed: false,
+    vscodeEnded: false,
+    hostEndedForMs: undefined as number | undefined,
+  };
 
   it('waits while no event came', () => {
     expect(decideActivation(none)).toBeUndefined();
@@ -379,19 +386,70 @@ describe('decideActivation', () => {
     expect(decideActivation({ ...none, failed: true })).toBe('failed');
   });
 
-  it('ends at once if VS Code or the extension host ended', () => {
+  it('ends at once if VS Code ended', () => {
     expect(decideActivation({ ...none, vscodeEnded: true })).toBe('ended');
-    expect(decideActivation({ ...none, hostEnded: true })).toBe('ended');
+  });
+
+  it('gives an extension host that ended time to come back: VS Code restarts it by itself', () => {
+    expect(decideActivation({ ...none, hostEndedForMs: 0 })).toBeUndefined();
+    expect(
+      decideActivation({ ...none, hostEndedForMs: HOST_RESTART_GRACE_MS - 1 }),
+    ).toBeUndefined();
+  });
+
+  it('ends when the extension host did not come back in time', () => {
+    expect(decideActivation({ ...none, hostEndedForMs: HOST_RESTART_GRACE_MS })).toBe('ended');
+    expect(decideActivation({ ...none, hostEndedForMs: 60_000 })).toBe('ended');
+  });
+
+  it('takes an activation within the time of grace', () => {
+    expect(decideActivation({ ...none, hostEndedForMs: 100, activated: true })).toBe('activated');
+  });
+
+  it('takes a failure within the time of grace: the restarted host has a reason', () => {
+    expect(decideActivation({ ...none, hostEndedForMs: 100, failed: true })).toBe('failed');
+  });
+
+  it('does not give VS Code that ended any time', () => {
+    expect(decideActivation({ ...none, hostEndedForMs: 0, vscodeEnded: true })).toBe('ended');
   });
 
   it('prefers the failure, which has a reason, to an end that follows it', () => {
     expect(decideActivation({ ...none, failed: true, vscodeEnded: true })).toBe('failed');
-    expect(decideActivation({ ...none, failed: true, hostEnded: true })).toBe('failed');
+    expect(decideActivation({ ...none, failed: true, hostEndedForMs: 99_999 })).toBe('failed');
   });
 
   it('prefers the activation: the extension runs, whatever came before', () => {
     expect(
-      decideActivation({ activated: true, failed: true, vscodeEnded: true, hostEnded: true }),
+      decideActivation({
+        activated: true,
+        failed: true,
+        vscodeEnded: true,
+        hostEndedForMs: 99_999,
+      }),
     ).toBe('activated');
+  });
+});
+
+describe('noActivationKind', () => {
+  const none = {
+    activated: false,
+    failed: false,
+    vscodeEnded: false,
+    hostEndedForMs: undefined as number | undefined,
+  };
+
+  it('names the event of the same priority as decideActivation', () => {
+    expect(
+      noActivationKind({ ...none, failed: true, vscodeEnded: true, hostEndedForMs: 9e9 }),
+    ).toBe('failed');
+    expect(noActivationKind({ ...none, vscodeEnded: true, hostEndedForMs: 9e9 })).toBe('vscode');
+    expect(noActivationKind({ ...none, hostEndedForMs: 9e9 })).toBe('host');
+  });
+
+  it('is undefined while the wait goes on, and if the extension activated', () => {
+    expect(noActivationKind(none)).toBeUndefined();
+    expect(noActivationKind({ ...none, hostEndedForMs: 10 })).toBeUndefined();
+    expect(noActivationKind({ ...none, activated: true, failed: true })).toBeUndefined();
   });
 });

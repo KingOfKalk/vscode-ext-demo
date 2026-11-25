@@ -3,14 +3,16 @@
 // the caller is only for a hang, where no event comes.
 import { relative } from 'node:path';
 import {
-  hasActivationFailed,
   completeLines,
+  decideActivation,
+  hasActivationFailed,
   hasHostTerminated,
   lastErrorBlock,
   linesAfter,
   readLog,
   runLogs,
   tail,
+  type ActivationEvents,
   type ActivationState,
   type RunLogs,
 } from './logs.ts';
@@ -33,10 +35,15 @@ export function markLog(file: string | undefined): LogMark {
   return { file, lines: text === undefined ? 0 : completeLines(text) };
 }
 
-/** What `file` got since `mark`; all of it if it is another file, such as the log of a new run. */
+/**
+ * What `file` got since `mark`; all of it if it is another file, such as the log of a new run, or
+ * if it has fewer lines than at the mark: it was made new.
+ */
 function newText(file: string, mark: LogMark | undefined): string {
   const text = readLog(file) ?? '';
-  return mark?.file === file ? linesAfter(text, mark.lines) : text;
+  return mark?.file === file && completeLines(text) >= mark.lines
+    ? linesAfter(text, mark.lines)
+    : text;
 }
 
 export interface ActivationSource {
@@ -52,7 +59,7 @@ export interface ActivationSource {
 
 /** The events in the logs of the current run, and what to say about them. */
 export function readActivationState(source: ActivationSource): {
-  state: ActivationState;
+  events: ActivationEvents;
   found: RunLogs | undefined;
   /** The extension host log of the current run, the part that counts. */
   hostText: string;
@@ -63,13 +70,47 @@ export function readActivationState(source: ActivationSource): {
   return {
     found,
     hostText,
-    state: {
+    events: {
       activated: source.isActivated(),
       failed: hasActivationFailed(hostText, source.id),
       vscodeEnded: !source.vscodeRuns(),
       hostEnded: hasHostTerminated(rendererText),
     },
   };
+}
+
+/**
+ * Reads the events of the activation at every poll, and since when the extension host has ended,
+ * for the time of grace of `decideActivation`.
+ */
+export class ActivationWatch {
+  readonly #source: ActivationSource;
+  readonly #now: () => number;
+  #hostEndedAt: number | undefined;
+
+  /** @param now only for tests */
+  constructor(source: ActivationSource, now: () => number = Date.now) {
+    this.#source = source;
+    this.#now = now;
+  }
+
+  poll(): {
+    decision: ReturnType<typeof decideActivation>;
+    state: ActivationState;
+    found: RunLogs | undefined;
+    hostText: string;
+  } {
+    const { events, found, hostText } = readActivationState(this.#source);
+    const now = this.#now();
+    if (events.hostEnded) this.#hostEndedAt ??= now;
+    const state: ActivationState = {
+      activated: events.activated,
+      failed: events.failed,
+      vscodeEnded: events.vscodeEnded,
+      hostEndedForMs: this.#hostEndedAt === undefined ? undefined : now - this.#hostEndedAt,
+    };
+    return { decision: decideActivation(state), state, found, hostText };
+  }
 }
 
 /** What the wait for an activation ended on, if it was not an activation. */

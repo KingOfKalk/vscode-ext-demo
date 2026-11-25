@@ -15,8 +15,13 @@ import { delimiter, join } from 'node:path';
 import { spawnGroup, startXvfb } from '../vscode-run.mjs';
 import { describeFailure } from '../vscode.mjs';
 import { sessionEnv } from './environment.ts';
-import { explainNoActivation, readActivationState, type ActivationSource } from './activation.ts';
-import { decideActivation, isActivated, listRuns, runLogs, tail } from './logs.ts';
+import {
+  ActivationWatch,
+  explainNoActivation,
+  type ActivationSource,
+  type NoActivation,
+} from './activation.ts';
+import { isActivated, listRuns, noActivationKind, tail } from './logs.ts';
 import {
   DEBUG_PORT,
   INSPECT_PORT,
@@ -30,6 +35,7 @@ import {
   assertPortFree,
   bootId,
   identify,
+  ignoreTimeout,
   leaderRuns,
   waitFor,
   type ProcessInfo,
@@ -66,6 +72,7 @@ import {
 
 const NOVNC_FILES = '/usr/share/novnc';
 const SCREEN = '1440x900x24';
+const ACTIVATION_TIMEOUT_MS = 30_000;
 
 export async function start(keep: boolean): Promise<void> {
   const novnc = readNovncConfig(process.env);
@@ -227,26 +234,22 @@ class Starter {
       vscodeRuns: () => leaderRuns(code),
       isActivated: () => isActivated(VSCODE_LOGS, before, id),
     };
+    const watch = new ActivationWatch(source);
     const outcome = await waitFor(
+      'the extension activates',
       () => {
-        const logs = runLogs(VSCODE_LOGS, before, id);
-        if (!logs) return `the window writes logs to ${VSCODE_LOGS}`;
-        return `the extension activates; see ${logs.demo}\nThe end of ${logs.host}:\n${tail(logs.host)}`;
-      },
-      () => {
-        const { state } = readActivationState(source);
-        const decision = decideActivation(state);
+        const { decision, state } = watch.poll();
         return decision === undefined ? undefined : { decision, state };
       },
-      { timeoutMs: 30_000, signal: this.#signal },
-    );
-    if (outcome.decision === 'activated') return;
-    if (outcome.state.failed) {
-      throw new Error(explainNoActivation({ kind: 'failed' }, source, VSCODE_LOGS));
-    }
+      { timeoutMs: ACTIVATION_TIMEOUT_MS, signal: this.#signal },
+    ).catch(ignoreTimeout);
+    if (outcome?.decision === 'activated') return;
+    const kind = outcome === undefined ? undefined : noActivationKind(outcome.state);
     // VS Code itself: its own log says why.
-    if (outcome.state.vscodeEnded) assertRuns(code);
-    throw new Error(explainNoActivation({ kind: 'host' }, source, VSCODE_LOGS));
+    if (kind === 'vscode') assertRuns(code);
+    const why: NoActivation =
+      kind === undefined ? { kind: 'timeout', seconds: ACTIVATION_TIMEOUT_MS / 1000 } : { kind };
+    throw new Error(explainNoActivation(why, source, VSCODE_LOGS));
   }
 
   async #startXvfb(env: NodeJS.ProcessEnv): Promise<string> {

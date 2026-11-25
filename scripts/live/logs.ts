@@ -86,8 +86,14 @@ export function hasHostTerminated(rendererLog: string): boolean {
   return HOST_TERMINATED.test(rendererLog);
 }
 
-/** What happened to the activation that a command waits for. */
-export interface ActivationState {
+/**
+ * VS Code restarts an extension host that ended unexpectedly, and the extension may activate again;
+ * this long a command waits for that before it calls the end a failure.
+ */
+export const HOST_RESTART_GRACE_MS = 5000;
+
+/** What the logs and the processes say about the activation that a command waits for. */
+export interface ActivationEvents {
   /** The extension logged its activation line. */
   activated: boolean;
   /** The extension host logged that `activate()` failed. */
@@ -97,16 +103,37 @@ export interface ActivationState {
   hostEnded: boolean;
 }
 
+export interface ActivationState {
+  activated: boolean;
+  failed: boolean;
+  vscodeEnded: boolean;
+  /** How long ago the window logged that its extension host ended; undefined if it did not. */
+  hostEndedForMs: number | undefined;
+}
+
 /**
  * The first event that ends the wait for an activation, or undefined while none has come. A failure
- * goes before an end: it has the reason. An activation goes first: the extension runs.
+ * goes before an end: it has the reason. An activation goes first: the extension runs. VS Code that
+ * ended ends the wait at once; an extension host that ended only after `HOST_RESTART_GRACE_MS`,
+ * because VS Code restarts it by itself.
  */
 export function decideActivation(
   state: ActivationState,
 ): 'activated' | 'failed' | 'ended' | undefined {
   if (state.activated) return 'activated';
   if (state.failed) return 'failed';
-  return state.vscodeEnded || state.hostEnded ? 'ended' : undefined;
+  if (state.vscodeEnded) return 'ended';
+  return state.hostEndedForMs !== undefined && state.hostEndedForMs >= HOST_RESTART_GRACE_MS
+    ? 'ended'
+    : undefined;
+}
+
+/** What a wait that did not see an activation ended on: the same order as `decideActivation`. */
+export function noActivationKind(state: ActivationState): 'failed' | 'vscode' | 'host' | undefined {
+  const decision = decideActivation(state);
+  if (decision === undefined || decision === 'activated') return undefined;
+  if (decision === 'failed') return 'failed';
+  return state.vscodeEnded ? 'vscode' : 'host';
 }
 
 /** The number of complete lines of a text: those that end with a newline. */
