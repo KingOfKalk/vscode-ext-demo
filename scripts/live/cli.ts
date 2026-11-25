@@ -3,12 +3,13 @@
 // Usage: npm run live -- <command>
 import { describeFailure } from '../vscode.mjs';
 import { parseLiveArgs, USAGE, UsageError, type LiveCommand } from './args.ts';
+import { breakAt, evaluate } from './debug.ts';
 import { reload } from './reload.ts';
 import { set } from './set.ts';
 import { status, stop } from './session.ts';
 import { showLogs } from './showLogs.ts';
 import { start } from './start.ts';
-import { isWindowCommand, onWindow } from './window.ts';
+import { onWindow } from './window.ts';
 
 async function execute(command: LiveCommand): Promise<void> {
   switch (command.name) {
@@ -30,12 +31,15 @@ async function execute(command: LiveCommand): Promise<void> {
     case 'logs':
       console.log(await showLogs(command.lines));
       return;
+    case 'eval':
+      console.log(await evaluate(command.expression));
+      return;
+    case 'break':
+      await breakAt(command);
+      return;
     default:
-      if (isWindowCommand(command)) {
-        console.log(await onWindow(command));
-        return;
-      }
-      throw new Error(`${command.name} is not implemented yet`);
+      console.log(await onWindow(command));
+      return;
   }
 }
 

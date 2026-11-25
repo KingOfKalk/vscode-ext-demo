@@ -168,7 +168,8 @@ export async function click(connection: Connection, target: string): Promise<str
   try {
     await locator.click({ timeout: ACTION_TIMEOUT_MS });
   } catch (error) {
-    throw new ActionError(`cannot click ${description}: ${oneLine(error)}`);
+    const overlay = await describeOverlay(connection.page).catch(() => undefined);
+    throw new ActionError(`cannot click ${description}: ${overlay ?? oneLine(error)}`);
   }
   const end = Date.now() + EFFECT_TIMEOUT_MS;
   for (;;) {
@@ -205,6 +206,7 @@ export async function key(connection: Connection, combo: string): Promise<string
 }
 
 const QUICK_INPUT = '.quick-input-widget';
+const DIALOG = '.monaco-dialog-box';
 
 /** The text in the input of the quick input, and its rows with the one that has the focus. */
 async function readPalette(page: Page): Promise<PaletteState> {
@@ -289,11 +291,24 @@ async function runFocused(page: Page, title: string): Promise<void> {
   }
 }
 
-/** Throws if an editor lies over the window (Settings opens like this): the palette does not open then. */
-export async function assertNoOverlay(page: Page): Promise<void> {
+/** What lies over the window and takes the clicks and keys, with the way out of it. */
+async function describeOverlay(page: Page): Promise<string | undefined> {
   if (await page.locator(MODAL_EDITOR).first().isVisible()) {
-    throw new ActionError('an editor lies over the window; close it first: key Escape');
+    return 'an editor lies over the window; close it first: key Escape';
   }
+  const dialog = page.locator(DIALOG).first();
+  if (!(await dialog.isVisible())) return undefined;
+  const text = await dialog
+    .locator('.dialog-message-container')
+    .innerText({ timeout: 1000 })
+    .catch(() => '');
+  return `a dialog lies over the window${text ? ` ("${text}")` : ''}; answer it first, or close it: key Escape`;
+}
+
+/** Throws if something lies over the window (Settings opens like this): the palette does not open then. */
+export async function assertNoOverlay(page: Page): Promise<void> {
+  const overlay = await describeOverlay(page);
+  if (overlay !== undefined) throw new ActionError(overlay);
 }
 
 /**

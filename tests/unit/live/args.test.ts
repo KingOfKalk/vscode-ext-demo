@@ -49,6 +49,26 @@ describe('parseLiveArgs', () => {
         expressions: ['this.count', '-1'],
       },
     ],
+    [
+      ['break', 'a.ts:1', '--eval', 'x', '--do=command "Demo: Increment Counter"', '--eval', 'y z'],
+      {
+        name: 'break',
+        file: 'a.ts',
+        line: 1,
+        trigger: { name: 'command', title: 'Demo: Increment Counter' },
+        expressions: ['x', 'y z'],
+      },
+    ],
+    [
+      ['break', 'C:/a.ts:7', '--do', 'set vscodeExtDemo.message \'"Hi"\''],
+      {
+        name: 'break',
+        file: 'C:/a.ts',
+        line: 7,
+        trigger: { name: 'set', setting: 'vscodeExtDemo.message', value: 'Hi' },
+        expressions: [],
+      },
+    ],
     [['eval', '1+1'], { name: 'eval', expression: '1+1' }],
     [['eval', '-1'], { name: 'eval', expression: '-1' }],
   ])('%j', (argv, command) => {
@@ -94,6 +114,14 @@ describe('parseLiveArgs', () => {
     [['break', 'a.ts:1', '--do', 'click "a'], 'quote'],
     [['break', 'a.ts:1', '--do', 'stop'], '--do cannot run stop'],
     [['break', 'a.ts:1', '--do', 'break b.ts:2'], '--do cannot run break'],
+    [['break', 'a.ts:1', '--do', 'logs'], '--do cannot run logs'],
+    [['break', 'a.ts:1', '--do', 'snapshot'], 'it can run: click, type, key, command, set'],
+    [['break', 'a.ts:1', '--do', ''], 'no command'],
+    [['break', 'a.ts:1', '--do', 'click a', '--do', 'click b'], '--do only once'],
+    [['break', 'a.ts:1', '--eval', ''], '--eval is empty'],
+    [['break', 'a.ts:1', '--eval', '  '], '--eval is empty'],
+    [['break', 'a.ts:1', '--eval'], '--eval'],
+    [['break', 'a.ts:1', '--when', 'x'], "Unknown option '--when'"],
     [['eval'], 'eval <expr>'],
   ])('refuses %j', (argv, message) => {
     const parse = () => parseLiveArgs(argv);

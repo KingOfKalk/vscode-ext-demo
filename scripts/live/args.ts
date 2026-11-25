@@ -19,7 +19,7 @@ export type LiveCommand =
       name: 'break';
       file: string;
       line: number;
-      trigger: LiveCommand | undefined;
+      trigger: Trigger | undefined;
       expressions: string[];
     }
   | { name: 'eval'; expression: string };
@@ -51,8 +51,9 @@ export class UsageError extends Error {
   override name = 'UsageError';
 }
 
-/** Commands that restart VS Code or use the debugger themselves cannot run while `break` waits. */
-const NOT_A_TRIGGER: readonly Name[] = ['start', 'stop', 'reload', 'break', 'eval'];
+/** What `break` can run: what makes the extension do something. */
+const TRIGGERS = ['click', 'type', 'key', 'command', 'set'] as const satisfies readonly Name[];
+export type Trigger = Extract<LiveCommand, { name: (typeof TRIGGERS)[number] }>;
 
 function isName(text: string): text is Name {
   return Object.hasOwn(USAGES, text);
@@ -121,29 +122,35 @@ function parseLogs(args: string[]): LiveCommand {
   return { name: 'logs', lines };
 }
 
-function parseTrigger(text: string): LiveCommand {
+function isTrigger(command: LiveCommand): command is Trigger {
+  return TRIGGERS.some((name) => name === command.name);
+}
+
+function parseTrigger(text: string): Trigger {
   const trigger = parseLiveArgs(splitWords(text));
-  if (NOT_A_TRIGGER.includes(trigger.name)) {
-    throw new UsageError(`--do cannot run ${trigger.name}`);
-  }
-  return trigger;
+  if (isTrigger(trigger)) return trigger;
+  throw new UsageError(`--do cannot run ${trigger.name}; it can run: ${TRIGGERS.join(', ')}`);
 }
 
 function parseBreak(args: string[]): LiveCommand {
   const { values, positionals } = parseOptions(
     args,
-    { do: { type: 'string' }, eval: { type: 'string', multiple: true } },
+    { do: { type: 'string', multiple: true }, eval: { type: 'string', multiple: true } },
     true,
   );
   const [location, ...more] = positionals;
   const match = /^(.+):([1-9]\d*)$/.exec(location ?? '');
   if (!match?.[1] || more.length > 0) throw wrong('break');
+  const [trigger, ...others] = values.do ?? [];
+  if (others.length > 0) throw new UsageError('--do only once: it is one command');
+  const expressions = values.eval ?? [];
+  if (expressions.some((text) => text.trim() === '')) throw new UsageError('--eval is empty');
   return {
     name: 'break',
     file: match[1],
     line: Number(match[2]),
-    trigger: values.do === undefined ? undefined : parseTrigger(values.do),
-    expressions: values.eval ?? [],
+    trigger: trigger === undefined ? undefined : parseTrigger(trigger),
+    expressions,
   };
 }
 

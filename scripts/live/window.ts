@@ -21,10 +21,6 @@ const ACTIONS = {
 
 export type WindowCommand = Of<keyof typeof ACTIONS>;
 
-export function isWindowCommand(command: LiveCommand): command is WindowCommand {
-  return Object.hasOwn(ACTIONS, command.name);
-}
-
 /**
  * Connects to the session, does the command and disconnects. Fails with one `ActionError`: what
  * Playwright says is cut to a line.
