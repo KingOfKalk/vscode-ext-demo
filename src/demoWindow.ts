@@ -2,18 +2,39 @@ import * as vscode from 'vscode';
 import { VIEW_TYPE } from './ids';
 import { createNonce } from './nonce';
 import { renderWindowHtml } from './windowHtml';
-import type { PanelHandle, WindowHost } from './windowController';
+import type { PanelHandle, VisibleTab, WindowHost, WindowPlace } from './windowController';
 
 const TITLE = 'Demo Window';
+
+function showOptions(place: WindowPlace): Parameters<typeof vscode.window.createWebviewPanel>[2] {
+  switch (place) {
+    case 'tab':
+      return vscode.ViewColumn.Active;
+    case 'beside':
+      return vscode.ViewColumn.Beside;
+    default:
+      return { viewColumn: place.column, preserveFocus: place.preserveFocus };
+  }
+}
+
+function isWindowTab(tab: vscode.Tab): boolean {
+  // The tab input of a webview panel has the view type with a prefix.
+  return tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith(VIEW_TYPE);
+}
+
+async function closeTabs(tabs: vscode.Tab[]): Promise<void> {
+  if (tabs.length > 0 && !(await vscode.window.tabGroups.close(tabs))) {
+    throw new Error(`VS Code did not close ${tabs.length} old window tab(s)`);
+  }
+}
 
 /** The VS Code side of the Demo window: creates panels and maps them to `PanelHandle`. */
 export class VsCodeWindowHost implements WindowHost {
   constructor(private readonly extensionUri: vscode.Uri) {}
 
-  create(location: 'tab' | 'beside'): PanelHandle {
-    const column = location === 'beside' ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
+  create(place: WindowPlace): PanelHandle {
     return this.wrap(
-      vscode.window.createWebviewPanel(VIEW_TYPE, TITLE, column, this.webviewOptions()),
+      vscode.window.createWebviewPanel(VIEW_TYPE, TITLE, showOptions(place), this.webviewOptions()),
     );
   }
 
@@ -25,16 +46,19 @@ export class VsCodeWindowHost implements WindowHost {
   }
 
   async closeStaleTabs(): Promise<void> {
-    // The tab input of a webview panel has the view type with a prefix.
-    const tabs = vscode.window.tabGroups.all
-      .flatMap((group) => group.tabs)
-      .filter(
-        (tab) =>
-          tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith(VIEW_TYPE),
-      );
-    if (tabs.length > 0 && !(await vscode.window.tabGroups.close(tabs))) {
-      throw new Error(`VS Code did not close ${tabs.length} old window tab(s)`);
-    }
+    await closeTabs(vscode.window.tabGroups.all.flatMap((group) => group.tabs).filter(isWindowTab));
+  }
+
+  visibleTab(): VisibleTab | undefined {
+    const tab = vscode.window.tabGroups.all
+      .map((group) => group.activeTab)
+      .find((active) => active !== undefined && isWindowTab(active));
+    return (
+      tab && {
+        column: tab.group.viewColumn,
+        close: () => closeTabs([tab]),
+      }
+    );
   }
 
   private webviewOptions(): vscode.WebviewOptions {

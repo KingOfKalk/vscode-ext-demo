@@ -20,12 +20,29 @@ export interface PanelHandle {
   setHtml(): void;
 }
 
+/** Where a new window opens: as the setting says, or in the group of another tab. */
+export type WindowPlace = Settings['openLocation'] | { column: number; preserveFocus: boolean };
+
+/** A window tab that is the active tab of its editor group. */
+export interface VisibleTab {
+  /** The editor group it is in. */
+  readonly column: number;
+  close(): Promise<void>;
+}
+
 /** What the window needs from VS Code. */
 export interface WindowHost {
-  create(location: Settings['openLocation']): PanelHandle;
+  create(place: WindowPlace): PanelHandle;
+  visibleTab(): VisibleTab | undefined;
   /** Closes window tabs that VS Code restored but did not hand over yet. */
   closeStaleTabs(): Promise<void>;
 }
+
+/**
+ * How long a visible window may go without being handed over. VS Code restores a window at once;
+ * one that waits this long belongs to an extension host that is gone.
+ */
+export const REPLACE_AFTER_MS = 2000;
 
 export interface WindowControllerDeps {
   host: WindowHost;
@@ -45,6 +62,8 @@ export class WindowController {
   private release: (() => void) | undefined;
   /** Set while a new window is being prepared, so quick calls share one window. */
   private opening: Promise<void> | undefined;
+  /** Set while a visible window that was not handed over is given time for it. */
+  private watchdog: ReturnType<typeof setTimeout> | undefined;
   private disposed = false;
 
   constructor(private readonly deps: WindowControllerDeps) {}
@@ -83,11 +102,29 @@ export class WindowController {
   }
 
   /**
-   * Stops listening to the store. The panel itself stays: closing it on shutdown would keep it
-   * from coming back after a reload.
+   * Looks for a dead window; call it on activation and when tabs change. After a restart of the
+   * extension host, VS Code still shows the old window, but never hands it over. A window that
+   * stays visible without being handed over is replaced. A hidden one is left alone until it is
+   * shown: VS Code may be about to restore it.
+   */
+  watch(): void {
+    if (this.findDead()) {
+      this.watchdog ??= setTimeout(() => {
+        this.watchdog = undefined;
+        void this.replaceDead();
+      }, REPLACE_AFTER_MS);
+    } else {
+      this.stopWatchdog();
+    }
+  }
+
+  /**
+   * Stops listening to the store and watching the tabs. The panel itself stays: closing it on
+   * shutdown would keep it from coming back after a reload.
    */
   dispose(): void {
     this.disposed = true;
+    this.stopWatchdog();
     this.release?.();
   }
 
@@ -112,6 +149,38 @@ export class WindowController {
     } catch (error) {
       onError('opening the window', error);
     }
+  }
+
+  /** The visible window that belongs to nobody. */
+  private findDead(): VisibleTab | undefined {
+    if (this.panel || this.opening || this.disposed) {
+      return undefined;
+    }
+    return this.deps.host.visibleTab();
+  }
+
+  /** Never rejects. */
+  private async replaceDead(): Promise<void> {
+    const { host, log } = this.deps;
+    try {
+      const dead = this.findDead();
+      if (!dead) {
+        return;
+      }
+      log.info('Replacing a window that lost its extension host');
+      // The new one first: a group whose only tab is closed goes away. From here on the new one
+      // is the window, also if VS Code hands the old one over after all.
+      // Never with the focus: nobody asked for a window, and the user may be typing elsewhere.
+      this.attach(host.create({ column: dead.column, preserveFocus: true }));
+      await dead.close();
+    } catch (error) {
+      log.warn(`Could not replace the window: ${describeError(error)}`);
+    }
+  }
+
+  private stopWatchdog(): void {
+    clearTimeout(this.watchdog);
+    this.watchdog = undefined;
   }
 
   private attach(panel: PanelHandle): void {
