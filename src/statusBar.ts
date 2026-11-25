@@ -19,6 +19,11 @@ export class StatusBar implements vscode.Disposable {
     });
   }
 
+  /** What a click runs. */
+  get command(): vscode.StatusBarItem['command'] {
+    return this.item.command;
+  }
+
   setVisible(visible: boolean): void {
     if (visible) {
       this.item.show();
