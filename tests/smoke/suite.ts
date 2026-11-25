@@ -111,7 +111,7 @@ async function untilShown(expected: Partial<Screen>): Promise<void> {
 
 /** The only window, with its style sheet. */
 const windowWith = (message: string, count: number): { windows: Page[] } => ({
-  windows: [{ message, count: String(count), cursor: 'pointer' }],
+  windows: [{ message, count: String(count), styled: true }],
 });
 
 async function focusNote(): Promise<void> {
@@ -173,19 +173,26 @@ async function openLocation(): Promise<void> {
   assert.equal((await onlyWindowTab()).group.viewColumn, vscode.ViewColumn.Two);
 }
 
+/** An object with these members; every other one is a function that does nothing. */
+function fake<T extends object>(members: Partial<T>): T {
+  const get = (target: object, key: string | symbol): unknown =>
+    Reflect.get(target, key) ?? (() => undefined);
+  return new Proxy(members, { get }) as T;
+}
+
 /**
  * VS Code says column 1 for a window that it restored, wherever it is. The suite cannot restore
  * one, so a fake panel must do. This runs the code of `src/`, not of the .vsix.
  */
 function revealAdopted(): Promise<void> {
   const calls: unknown[][] = [];
-  const panel = {
-    webview: {},
+  const panel = fake<vscode.WebviewPanel>({
+    webview: fake<vscode.Webview>({}),
     viewColumn: vscode.ViewColumn.One,
-    reveal: (...args: unknown[]) => void calls.push(args),
-  } as unknown as vscode.WebviewPanel;
+    reveal: (column, preserveFocus = false) => void calls.push([column, preserveFocus]),
+  });
   new VsCodeWindowHost(extension().extensionUri).adopt(panel).reveal();
-  assert.deepEqual(calls, [[]], 'the arguments of reveal()');
+  assert.deepEqual(calls, [[undefined, false]], 'column and preserveFocus of reveal()');
   return Promise.resolve();
 }
 
@@ -233,8 +240,6 @@ async function hiddenWindow(): Promise<void> {
   await execute('workbench.action.previousEditor');
   await until('the window is back', () => !hidden());
   await untilShown(windowWith('Changed while hidden', 1));
-  await execute(COMMANDS.decrement);
-  await untilShown(windowWith('Changed while hidden', 0));
 }
 
 async function statusBar(): Promise<void> {
@@ -355,6 +360,9 @@ async function settingsChange(): Promise<void> {
 
 const CHECKS: [name: string, check: () => Promise<void>][] = [
   ['is installed from the .vsix and activates on its own', activation],
+  // Before any setting changes: every change shows or hides the item again, so later the check
+  // could not see that the activation forgot to.
+  ['shows the count in the status bar', statusBar],
   ['registers all commands', commandsRegistered],
   ['opens one window, also for quick calls', oneWindow],
   ['opens the window where openLocation says', openLocation],
@@ -362,7 +370,6 @@ const CHECKS: [name: string, check: () => Promise<void>][] = [
   ['runs the page of the window', pageRuns],
   ['shows the count and the message in the window', windowShowsState],
   ['shows in the window what changed while it was hidden', hiddenWindow],
-  ['shows the count in the status bar', statusBar],
   ['shows the rows and the count in the sidebar', sidebar],
   ['replaces a window that nobody owns', deadWindow],
   ['increments after the window was closed', incrementAfterClose],

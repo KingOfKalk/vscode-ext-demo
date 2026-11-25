@@ -4,12 +4,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { EXTENSION_ID, STATUS_BAR_ID } from '../../src/ids';
 
-/** A page of the Demo window. The texts are '' until its script runs. */
+/** A page of the Demo window. A text is '' if it is not visible, or until the script runs. */
 export interface Page {
   message: string;
   count: string;
-  /** Of the button that counts: 'pointer' if `media/window.css` was loaded. */
-  cursor: string;
+  /** Whether `media/window.css` was loaded. */
+  styled: boolean;
 }
 
 export interface Screen {
@@ -43,16 +43,22 @@ const WORKBENCH = `(() => {
 // The page is in a frame of its own inside the frame that VS Code makes for a webview.
 const WINDOW = `(() => {
   const page = document.getElementById('active-frame')?.contentDocument;
-  const text = (id) => page?.getElementById(id)?.textContent ?? '';
-  const button = page?.getElementById('increment');
-  return {
-    message: text('message'),
-    count: text('count'),
-    cursor: button ? getComputedStyle(button).cursor : '',
+  const text = (id) => {
+    const element = page?.getElementById(id);
+    return element?.checkVisibility({ visibilityProperty: true }) ? element.textContent : '';
   };
+  const styled = Boolean(page?.querySelector('link[rel="stylesheet"]')?.sheet);
+  return { message: text('message'), count: text('count'), styled };
 })()`;
 
-/** Evaluates in a target. Rejects if the connection ends before the answer. */
+interface Answer {
+  result?: {
+    result?: { value?: unknown };
+    exceptionDetails?: { text: string; exception?: { description?: string } };
+  };
+}
+
+/** Evaluates in a target. Rejects if it throws or the connection ends before the answer. */
 async function evaluate(target: Target, expression: string): Promise<unknown> {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   try {
@@ -68,7 +74,9 @@ async function evaluate(target: Target, expression: string): Promise<unknown> {
         reject(new Error('the connection to VS Code was lost'));
       };
     });
-    const { result } = JSON.parse(answer) as { result?: { result?: { value?: unknown } } };
+    const { result } = JSON.parse(answer) as Answer;
+    const thrown = result?.exceptionDetails;
+    if (thrown) throw new Error(thrown.exception?.description ?? thrown.text);
     return result?.result?.value;
   } finally {
     socket.close();
@@ -83,10 +91,7 @@ export async function readScreen(profile: string): Promise<Screen> {
   const workbench = targets.find(({ type, url }) => type === 'page' && url.includes('/workbench/'));
   if (!workbench) throw new Error('there is no VS Code window');
   const pages = targets.filter(
-    ({ type, url }) =>
-      type === 'iframe' &&
-      URL.canParse(url) &&
-      new URL(url).searchParams.get('extensionId') === EXTENSION_ID,
+    ({ type, url }) => type === 'iframe' && url.includes(`extensionId=${EXTENSION_ID}&`),
   );
   const [shown, ...windows] = await Promise.all([
     evaluate(workbench, WORKBENCH),
