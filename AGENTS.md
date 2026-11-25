@@ -17,14 +17,32 @@ Guidance for any coding agent working in this repository. [CONTRIBUTING.md](CONT
 - Workflows: `permissions: {}` at the top and the minimum per job, `persist-credentials: false` on checkout, no `pull_request_target`, runners pinned to `ubuntu-26.04`.
 - Shell scripts fail loudly (`set -euo pipefail`); a script that hides a failure is a bug.
 
+## Issues and the spec
+
+- Work starts from an issue: open one, or claim the one you were given (set `status/in-progress`). The status labels and transitions are in [CONTRIBUTING.md](CONTRIBUTING.md#issue-lifecycle).
+- Comment on every status transition.
+- The spec (the extension's requirements) is issue [#1](https://github.com/KingOfKalk/vscode-ext-demo/issues/1), not a file in the repo.
+
 ## Definition of done
 
 1. `npm run check` passes.
 2. `npm run test:smoke` passes.
 3. Anything visible or interactive: tried in a live VS Code session (see Live session). The PR says in text what was tried and seen.
-4. Draft PR, CI green (`lint`, `test`, `build`, `smoke`), then mark it ready. The owner merges.
+4. Draft PR, CI green (`lint`, `test`, `build`, `smoke`), then `gh pr ready` and set `status/review`. The owner merges. If the task says to open only a draft, leave it a draft and say so.
 
 Green unit tests do not prove that the extension starts; the smoke tests do.
+
+## Add a command
+
+Take `decrement` (commit 4ee9313) as the model. A command touches:
+
+1. `src/ids.ts`: the ID in `COMMANDS`.
+2. `package.json`: the entry in `contributes.commands` (`title`, `category: "Demo"`); `tests/unit/manifest.test.ts` lists the palette commands in order.
+3. `src/extension.ts`: `registerCommand(COMMANDS.<id>, …)` wrapped in `guarded`.
+4. The action itself, if it changes the count: a method in `src/counterStore.ts` and a unit test.
+5. A button in the window: the message type in `src/protocol.ts` (type and `TO_EXTENSION_TYPES`), a `case` in `src/windowMessages.ts` and its `store` interface, the `<button>` in `src/windowHtml.ts`, the click handler in `src/webview/main.ts`, styles in `media/window.css`. The button ID is the action name (`decrement`).
+6. `README.md`: the Commands table.
+7. Tests: unit (`tests/unit/`: `protocol`, `windowHtml`, `windowMessages`, `manifest`, `counterStore`), webview (`tests/webview/main.test.ts`), smoke (a check in `tests/smoke/suite.ts`).
 
 ## Live session
 
