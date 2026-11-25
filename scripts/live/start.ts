@@ -15,7 +15,13 @@ import { delimiter, join } from 'node:path';
 import { spawnGroup, startXvfb } from '../vscode-run.mjs';
 import { describeFailure } from '../vscode.mjs';
 import { sessionEnv } from './environment.ts';
-import { isActivated, listRuns, runLogs, tail } from './logs.ts';
+import {
+  ActivationWatch,
+  explainNoActivation,
+  type ActivationSource,
+  type NoActivation,
+} from './activation.ts';
+import { isActivated, listRuns, noActivationKind, tail } from './logs.ts';
 import {
   DEBUG_PORT,
   INSPECT_PORT,
@@ -29,6 +35,7 @@ import {
   assertPortFree,
   bootId,
   identify,
+  ignoreTimeout,
   leaderRuns,
   waitFor,
   type ProcessInfo,
@@ -37,6 +44,7 @@ import {
 import {
   abandonStart,
   createSession,
+  describeAlreadyRunning,
   ensureRunDir,
   LOG_DIR,
   NOVNC_TOKENS,
@@ -48,6 +56,7 @@ import {
   sessionState,
   VNC_SOCKET,
   VSCODE_LOGS,
+  vscodeOfSessionRuns,
   type Session,
 } from './session.ts';
 import {
@@ -63,6 +72,7 @@ import {
 
 const NOVNC_FILES = '/usr/share/novnc';
 const SCREEN = '1440x900x24';
+const ACTIVATION_TIMEOUT_MS = 30_000;
 
 export async function start(keep: boolean): Promise<void> {
   const novnc = readNovncConfig(process.env);
@@ -128,7 +138,7 @@ function assertNotRunning(): void {
     case 'starting':
       throw new Error(`a live session is already starting (process ${session.starter.pid})`);
     case 'running':
-      throw new Error('a live session is already running; stop it first: npm run live -- stop');
+      throw new Error(describeAlreadyRunning(vscodeOfSessionRuns(session)));
     case 'gone':
       removeSession();
   }
@@ -210,21 +220,36 @@ class Starter {
     return kept;
   }
 
-  /** Waits for the extension. The status bar does not tell: a kept profile may hide the count. */
+  /**
+   * Waits for the first event: the extension activates, `activate()` fails, or VS Code or its
+   * extension host ends. The time limit is only for a hang. The status bar does not tell: a kept
+   * profile may hide the count.
+   */
   async #activated(code: ProcessInfo, before: readonly string[]): Promise<void> {
     const id = extensionId();
-    await waitFor(
+    const source: ActivationSource = {
+      logs: VSCODE_LOGS,
+      before,
+      id,
+      vscodeRuns: () => leaderRuns(code),
+      isActivated: () => isActivated(VSCODE_LOGS, before, id),
+    };
+    const watch = new ActivationWatch(source);
+    const outcome = await waitFor(
+      'the extension activates',
       () => {
-        const logs = runLogs(VSCODE_LOGS, before, id);
-        if (!logs) return `the window writes logs to ${VSCODE_LOGS}`;
-        return `the extension activates; see ${logs.demo}\nThe end of ${logs.host}:\n${tail(logs.host)}`;
+        const { decision, state } = watch.poll();
+        return decision === undefined ? undefined : { decision, state };
       },
-      () => {
-        assertRuns(code);
-        return isActivated(VSCODE_LOGS, before, id) || undefined;
-      },
-      { timeoutMs: 30_000, signal: this.#signal },
-    );
+      { timeoutMs: ACTIVATION_TIMEOUT_MS, signal: this.#signal },
+    ).catch(ignoreTimeout);
+    if (outcome?.decision === 'activated') return;
+    const kind = outcome === undefined ? undefined : noActivationKind(outcome.state);
+    // VS Code itself: its own log says why.
+    if (kind === 'vscode') assertRuns(code);
+    const why: NoActivation =
+      kind === undefined ? { kind: 'timeout', seconds: ACTIVATION_TIMEOUT_MS / 1000 } : { kind };
+    throw new Error(explainNoActivation(why, source, VSCODE_LOGS));
   }
 
   async #startXvfb(env: NodeJS.ProcessEnv): Promise<string> {

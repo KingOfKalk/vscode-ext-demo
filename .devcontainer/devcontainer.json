@@ -21,6 +21,7 @@
     }
   },
   "postCreateCommand": "scripts/install-system-deps.sh --live && npm ci",
+  "waitFor": "postCreateCommand",
   "customizations": {
     "vscode": {
       "extensions": [

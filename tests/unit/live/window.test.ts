@@ -14,23 +14,28 @@ describe('onWindow', () => {
   it('closes the connection and cuts what Playwright says to a line', async () => {
     let closed = false;
     const connection = {
-      page: { screenshot: () => Promise.reject(new Error('boom\nCall log:\n  - waiting')) },
-      webview: () => Promise.resolve(undefined),
       close: () => {
         closed = true;
         return Promise.resolve();
       },
     } as unknown as Connection;
     const command: LiveCommand = { name: 'key', combo: 'Enter' };
-    await expect(
-      onWindow(command as WindowCommand, () => Promise.resolve(connection)),
-    ).rejects.toThrow(ActionError);
+    const actions = { key: () => Promise.reject(new Error('boom\nCall log:\n  - waiting')) };
+    const failure = await onWindow(
+      command as WindowCommand,
+      () => Promise.resolve(connection),
+      actions,
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ActionError);
+    expect((failure as ActionError).message).toBe('boom (waiting)');
     expect(closed).toBe(true);
   });
 
   it('reports a failed connection as one line', async () => {
     await expect(
-      onWindow({ name: 'snapshot' }, () => Promise.reject(new Error('no live session runs'))),
-    ).rejects.toThrow('no live session runs');
+      onWindow({ name: 'snapshot' }, () =>
+        Promise.reject(new Error('no live session runs\nCall log:\n  - waiting')),
+      ),
+    ).rejects.toThrow(new ActionError('no live session runs (waiting)'));
   });
 });

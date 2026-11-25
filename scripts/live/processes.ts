@@ -93,6 +93,11 @@ export interface WaitOptions {
   signal?: AbortSignal | undefined;
 }
 
+/** The time was up in `waitFor`; an error of the attempt is none. */
+export class WaitTimeout extends Error {
+  override name = 'WaitTimeout';
+}
+
 /**
  * Waits until `attempt` returns something; an error it throws ends the wait.
  * @param what for the error; a function is called only then
@@ -109,10 +114,16 @@ export async function waitFor<T>(
     if (value !== undefined) return value;
     if (Date.now() > end) {
       const text = typeof what === 'string' ? what : what();
-      throw new Error(`waited ${timeoutMs / 1000} s, but this did not happen: ${text}`);
+      throw new WaitTimeout(`waited ${timeoutMs / 1000} s, but this did not happen: ${text}`);
     }
     await sleep(pauseMs, undefined, { signal }).catch(() => undefined);
   }
+}
+
+/** For `.catch()` after `waitFor`: the time was up gives undefined, any other error goes on. */
+export function ignoreTimeout(error: unknown): undefined {
+  if (error instanceof WaitTimeout) return undefined;
+  throw error;
 }
 
 /** Throws, naming the port, if something listens there already. */

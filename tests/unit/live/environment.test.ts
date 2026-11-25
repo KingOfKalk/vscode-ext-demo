@@ -60,7 +60,32 @@ describe('sessionEnv', () => {
     'SHELL',
     'LOGNAME',
     'MYLC_ALL',
+    // Not a name of a locale category.
+    'LC_API_TOKEN',
+    'LC_FOO',
+    'LC_ALLX',
+    'LC_',
   ])('does not pass %s', (name) => {
     expect(sessionEnv({ [name]: 'x' })).not.toHaveProperty(name);
+  });
+});
+
+describe('sessionEnv locale', () => {
+  it.each([
+    'LC_ADDRESS',
+    'LC_ALL',
+    'LC_COLLATE',
+    'LC_CTYPE',
+    'LC_IDENTIFICATION',
+    'LC_MEASUREMENT',
+    'LC_MESSAGES',
+    'LC_MONETARY',
+    'LC_NAME',
+    'LC_NUMERIC',
+    'LC_PAPER',
+    'LC_TELEPHONE',
+    'LC_TIME',
+  ])('passes the locale category %s', (name) => {
+    expect(sessionEnv({ [name]: 'C' })).toHaveProperty(name, 'C');
   });
 });

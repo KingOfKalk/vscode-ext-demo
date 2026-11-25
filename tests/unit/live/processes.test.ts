@@ -11,6 +11,7 @@ import {
   parseStat,
   stopGroup,
   waitFor,
+  WaitTimeout,
 } from '../../../scripts/live/processes.ts';
 
 const linux = process.platform === 'linux';
@@ -100,6 +101,21 @@ describe('waitFor', () => {
     await expect(
       waitFor('a miracle', () => undefined, { timeoutMs: 20, pauseMs: 1 }),
     ).rejects.toThrow('waited 0.02 s, but this did not happen: a miracle');
+  });
+
+  it('fails with a WaitTimeout when time is up, and with the own error of the attempt otherwise', async () => {
+    await expect(
+      waitFor('a miracle', () => undefined, { timeoutMs: 20, pauseMs: 1 }),
+    ).rejects.toBeInstanceOf(WaitTimeout);
+    const failure = await waitFor(
+      'a miracle',
+      () => {
+        throw new Error('EACCES');
+      },
+      { timeoutMs: 5000, pauseMs: 1 },
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(WaitTimeout);
   });
 
   it('ends with the signal', async () => {
