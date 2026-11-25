@@ -21,17 +21,21 @@ const ACTIONS = {
 
 export type WindowCommand = Of<keyof typeof ACTIONS>;
 
+type Action = (c: Connection, command: LiveCommand) => Promise<string>;
+
 /**
  * Connects to the session, does the command and disconnects. Fails with one `ActionError`: what
  * Playwright says is cut to a line.
  * @param connection only for tests
+ * @param actions only for tests
  */
 export async function onWindow(
   command: WindowCommand,
   connection: () => Promise<Connection> = connect,
+  actions: object = ACTIONS,
 ): Promise<string> {
   // One cast: the table is checked per command above, here the name picks the entry.
-  const action = ACTIONS[command.name] as (c: Connection, command: LiveCommand) => Promise<string>;
+  const action = (actions as Record<string, Action | undefined>)[command.name];
   if (typeof action !== 'function') throw new Error(`${command.name} is not a window command`);
   let open: Connection;
   try {
