@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev",
+      "dependsOn": ["sandbox", "watch"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "sandbox",
+      "type": "shell",
+      "command": "mkdir -p .vscode-live/sandbox",
+      "presentation": { "reveal": "never" },
+      "problemMatcher": []
+    },
+    {
+      "label": "watch",
+      "type": "shell",
+      "command": "npm run watch",
+      "isBackground": true,
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "never" },
+      "problemMatcher": {
+        "owner": "esbuild",
+        "source": "esbuild",
+        "fileLocation": ["relative", "${workspaceFolder}"],
+        "pattern": [
+          { "regexp": "^[✘▲] \\[(ERROR|WARNING)\\] (.*)$", "severity": 1, "message": 2 },
+          { "regexp": "^$" },
+          { "regexp": "^\\s+(\\S+?):(\\d+):(\\d+):\\s*$", "file": 1, "line": 2, "column": 3 }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^\\[watch\\] build started$",
+          "endsPattern": "^\\[watch\\] build finished$"
+        }
+      }
+    }
+  ]
+}

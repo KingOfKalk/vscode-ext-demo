@@ -10,9 +10,17 @@
     "6080": {
       "label": "noVNC",
       "onAutoForward": "silent"
+    },
+    "9222": {
+      "label": "VS Code window debugger",
+      "onAutoForward": "ignore"
+    },
+    "9229": {
+      "label": "VS Code extension host debugger",
+      "onAutoForward": "ignore"
     }
   },
-  "postCreateCommand": "scripts/install-system-deps.sh && npm ci",
+  "postCreateCommand": "scripts/install-system-deps.sh --live && npm ci",
   "customizations": {
     "vscode": {
       "extensions": [

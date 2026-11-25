@@ -1,7 +1,7 @@
 // Runs in the extension host of a real VS Code, next to the installed .vsix. Bundled by run.mjs
 // into the temporary directory of the run.
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import * as vscode from 'vscode';
 import type { DemoApi } from '../../src/extension';
@@ -246,7 +246,10 @@ const CHECKS: [name: string, check: () => Promise<void>][] = [
 export async function run(): Promise<void> {
   const results = CHECKS.map(([name]): CheckResult => ({ name, status: 'pending' }));
   const save = () => {
-    writeFileSync(join(DIR, 'results.json'), JSON.stringify(results));
+    const file = join(DIR, 'results.json');
+    // Renamed: a VS Code that ends in between never leaves half a file.
+    writeFileSync(`${file}.part`, JSON.stringify(results));
+    renameSync(`${file}.part`, file);
   };
   for (const [index, [name, check]] of CHECKS.entries()) {
     results[index] = { name, status: 'running' };

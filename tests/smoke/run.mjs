@@ -3,7 +3,6 @@
 // Usage: npm run test:smoke [-- [--report <file>] [<file.vsix>]]
 // Without a .vsix it builds and packages one. `--report` writes a JSON report for ci-summary.mjs.
 import { build } from 'esbuild';
-import { spawn, spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -16,86 +15,28 @@ import {
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { describeFailure, ensureVscode, minimumVersion } from '../../scripts/vscode.mjs';
+import {
+  cleanEnv,
+  installVsix,
+  killGroup,
+  QUIET_FLAGS,
+  QUIET_SETTINGS,
+  run,
+  spawnGroup,
+  startXvfb,
+  vscodeFlags,
+} from '../../scripts/vscode-run.mjs';
 import { hostProblems, LOGS, problems, readLog, toReport } from './results.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 const CACHE = process.env.VSCODE_TEST_CACHE ?? join(ROOT, '.vscode-test');
 const TIMEOUT_MS = 5 * 60_000;
 
-/** For a clean profile: no updates, no telemetry, nothing that opens on its own. */
-const SETTINGS = {
-  'chat.disableAIFeatures': true,
-  'extensions.autoCheckUpdates': false,
-  'extensions.autoUpdate': 'off',
-  'telemetry.telemetryLevel': 'off',
-  'update.mode': 'none',
-  'workbench.startupEditor': 'none',
-};
-
-/** Variables that would let a surrounding VS Code, desktop or user setup change how ours starts. */
-const DROPPED =
-  /^(VSCODE|ELECTRON|WAYLAND|XDG_SESSION)_|^(NODE_OPTIONS|XDG_CONFIG_HOME|XDG_CACHE_HOME|XDG_DATA_HOME)$/;
-
-/**
- * The environment for VS Code: HOME is in the run directory, so nothing of the real home (config,
- * caches, credentials) is read or written.
- * @param {string} home
- * @returns {NodeJS.ProcessEnv}
- */
-function cleanEnv(home) {
-  return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !DROPPED.test(name))),
-    HOME: home,
-  };
-}
-
-/**
- * @param {string} command
- * @param {string[]} args
- * @param {NodeJS.ProcessEnv} [env]
- */
-function run(command, args, env = process.env) {
-  const result = spawnSync(command, args, {
-    cwd: ROOT,
-    env,
-    stdio: ['ignore', 'inherit', 'inherit'],
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(
-      `${command} ${args.join(' ')} failed (${result.signal ?? `exit ${String(result.status)}`})`,
-    );
-  }
-}
-
 /** @type {Set<import('node:child_process').ChildProcess>} */
 const children = new Set();
 
-/**
- * Starts a process in its own group; the group ends with this script at the latest.
- * @param {string} command
- * @param {string[]} args
- * @param {NodeJS.ProcessEnv} env
- * @param {'pipe' | 'ignore'} [fd3]
- */
-function start(command, args, env, fd3 = 'ignore') {
-  const child = spawn(command, args, {
-    detached: true,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe', fd3],
-  });
-  children.add(child);
-  return child;
-}
-
 function killAll() {
-  for (const { pid } of children) {
-    try {
-      if (pid !== undefined) process.kill(-pid, 'SIGKILL');
-    } catch {
-      // Already gone.
-    }
-  }
+  for (const { pid } of children) killGroup(pid);
 }
 
 /**
@@ -113,28 +54,6 @@ function cleanUp(dir) {
 }
 
 /**
- * Starts Xvfb on a free display.
- * @returns {Promise<string>} the display
- */
-function startXvfb() {
-  const xvfb = start(
-    'Xvfb',
-    ['-displayfd', '3', '-screen', '0', '1280x800x24', '-nolisten', 'tcp'],
-    process.env,
-    'pipe',
-  );
-  return new Promise((resolve, reject) => {
-    let errors = '';
-    xvfb.stderr?.on('data', (data) => (errors += String(data)));
-    xvfb.stdio[3]?.once('data', (data) => resolve(`:${String(data).trim()}`));
-    xvfb.once('error', (error) =>
-      reject(new Error(`cannot start Xvfb (${error.message}); run scripts/install-system-deps.sh`)),
-    );
-    xvfb.once('exit', (code) => reject(new Error(`Xvfb ended (exit ${String(code)}): ${errors}`)));
-  });
-}
-
-/**
  * Runs VS Code until it ends.
  * @param {string} command
  * @param {string[]} args
@@ -142,7 +61,8 @@ function startXvfb() {
  * @returns {Promise<{ ending: string, output: string }>} ending: 'exit 0' if all is well
  */
 function runVscode(command, args, env) {
-  const vscode = start(command, args, env);
+  const vscode = spawnGroup(command, args, env);
+  children.add(vscode);
   let output = '';
   const collect = (/** @type {Buffer} */ data) => (output += String(data));
   vscode.stdout?.on('data', collect);
@@ -181,11 +101,11 @@ async function main() {
   });
   if (positionals.length > 1) throw new Error('expected at most one .vsix');
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-  if (positionals.length === 0) run('npm', ['run', 'package']);
+  if (positionals.length === 0) run('npm', ['run', 'package'], { cwd: ROOT });
   const vsix = resolve(positionals[0] ?? join(ROOT, `${manifest.name}-${manifest.version}.vsix`));
   if (!existsSync(vsix)) throw new Error(`${vsix} does not exist`);
   const version = minimumVersion(manifest.engines.vscode);
-  const display = await startXvfb();
+  const display = await startXvfb({ onSpawn: (child) => children.add(child) });
   const vscode = await ensureVscode(version, CACHE);
 
   // Not os.tmpdir(): VS Code does not start with a profile under a long path.
@@ -200,7 +120,7 @@ async function main() {
   mkdirSync(home);
   mkdirSync(extensions);
   mkdirSync(workspace);
-  writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify(SETTINGS));
+  writeFileSync(join(profile, 'User', 'settings.json'), JSON.stringify(QUIET_SETTINGS));
   writeFileSync(join(workspace, 'note.txt'), 'A file to open next to the Demo window.\n');
   cpSync(join(ROOT, 'tests/smoke/driver'), driver, { recursive: true });
   await build({
@@ -215,20 +135,8 @@ async function main() {
   });
 
   const executable = join(vscode, 'code');
-  const flags = [
-    `--user-data-dir=${profile}`,
-    `--extensions-dir=${extensions}`,
-    '--no-sandbox',
-    '--disable-gpu',
-    '--disable-dev-shm-usage',
-    '--password-store=basic',
-  ];
-  // The command line of VS Code. Not bin/code: it may ask, or call the one of another VS Code.
-  const cli = join(vscode, 'resources/app/out/cli.js');
-  run(executable, [cli, ...flags, '--install-extension', vsix], {
-    ...cleanEnv(home),
-    ELECTRON_RUN_AS_NODE: '1',
-  });
+  const flags = vscodeFlags(profile, extensions);
+  installVsix(vscode, flags, vsix, cleanEnv(home));
 
   console.log(`Running the smoke tests in VS Code ${version}, in ${dir}`);
   const startTime = Date.now();
@@ -236,11 +144,7 @@ async function main() {
     executable,
     [
       ...flags,
-      '--disable-telemetry',
-      '--disable-updates',
-      '--disable-workspace-trust',
-      '--skip-release-notes',
-      '--skip-welcome',
+      ...QUIET_FLAGS,
       `--extensionDevelopmentPath=${driver}`,
       `--extensionTestsPath=${suite}`,
       workspace,

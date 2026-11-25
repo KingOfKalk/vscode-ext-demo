@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Installs the system packages VS Code needs to run under Xvfb. Debian 13 (trixie) and Ubuntu 26.04,
 # as root or with sudo. Does nothing if all packages are there.
+# Usage: scripts/install-system-deps.sh [--live]
+# --live adds what only the live session needs; CI goes without.
 set -euo pipefail
+
+if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != --live ]; }; then
+  echo "usage: $0 [--live]" >&2
+  exit 1
+fi
 
 packages=(
   ca-certificates
@@ -24,6 +31,14 @@ packages=(
   libxkbfile1
   libxrandr2
 )
+if [ "${1:-}" = --live ]; then
+  packages+=(
+    openbox
+    novnc
+    websockify
+    x11vnc
+  )
+fi
 
 missing=()
 for package in "${packages[@]}"; do

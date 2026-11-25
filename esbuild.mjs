@@ -1,4 +1,5 @@
 import { build, context } from 'esbuild';
+import { createTracker, watchPlugin } from './scripts/watch-markers.mjs';
 
 const watch = process.argv.includes('--watch');
 
@@ -22,11 +23,24 @@ const targets = [
   },
 ];
 
-const common = { bundle: true, minify: false, sourcemap: 'linked', logLevel: 'info' };
+const common = { bundle: true, minify: false, sourcemap: 'linked' };
 
 if (watch) {
-  const contexts = await Promise.all(targets.map((t) => context({ ...common, ...t })));
+  // The two bundles rebuild on their own; scripts/watch-markers.mjs makes one start and one end of it.
+  const tracker = createTracker();
+  const contexts = await Promise.all(
+    targets.map((t) =>
+      context({
+        ...common,
+        ...t,
+        logLevel: 'silent',
+        plugins: [watchPlugin(String(t.outfile), tracker)],
+      }),
+    ),
+  );
+  // The first build covers both, also if one of them is done before the other starts.
+  for (const t of targets) tracker.started(String(t.outfile));
   await Promise.all(contexts.map((c) => c.watch()));
 } else {
-  await Promise.all(targets.map((t) => build({ ...common, ...t })));
+  await Promise.all(targets.map((t) => build({ ...common, ...t, logLevel: 'info' })));
 }

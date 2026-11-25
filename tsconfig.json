@@ -16,5 +16,5 @@
     "types": ["node", "vscode"]
   },
   "include": ["src", "tests"],
-  "exclude": ["src/webview", "tests/webview"]
+  "exclude": ["src/webview", "tests/webview", "tests/unit/live"]
 }
