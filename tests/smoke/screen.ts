@@ -47,7 +47,9 @@ const WINDOW = `(() => {
     const element = page?.getElementById(id);
     return element?.checkVisibility({ visibilityProperty: true }) ? element.textContent : '';
   };
-  const styled = Boolean(page?.querySelector('link[rel="stylesheet"]')?.sheet);
+  const sheet = page?.querySelector('link[rel="stylesheet"]')?.sheet;
+  // A missing or blocked file leaves an empty sheet.
+  const styled = sheet != null && sheet.cssRules.length > 0;
   return { message: text('message'), count: text('count'), styled };
 })()`;
 
