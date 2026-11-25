@@ -47,6 +47,11 @@ npm run test:smoke  # tests the .vsix in a real VS Code, see AGENTS.md
 
 Working on the code, as a person or an agent: see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Live session and F5
+
+- Watch the extension run in a browser: `npm run live -- start` in the dev container, then open the `noVNC:` URL it prints (port 6080, which the dev container forwards; the URL carries a token). `npm run live -- stop` ends it. Agents drive the same window, see [AGENTS.md](AGENTS.md). `LIVE_NOVNC_PORT` changes the port.
+- Debug it yourself: press F5 ("Run Extension"). It starts the watch build and an Extension Development Host that opens the empty folder `.vscode-live/sandbox`; breakpoints in the TypeScript work through the source maps.
+
 ## License
 
 [MIT](LICENSE)
