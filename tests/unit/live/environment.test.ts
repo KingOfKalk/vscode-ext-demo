@@ -19,11 +19,31 @@ describe('sessionEnv', () => {
     'GH_HOST',
     'GITHUB_TOKEN',
     'GITHUB_ACTOR',
+    'REMOTE_CONTAINERS',
+    'REMOTE_CONTAINERS_IPC',
+    'REMOTE_CONTAINERS_SOCKETS',
+    'GIT_ASKPASS',
+    'SSH_ASKPASS',
+    'DB_PASSWORD',
+    'AWS_ACCESS_KEY',
+    'SIGNING_KEY',
+    'TOKEN',
+    'PASSWORD',
   ])('drops %s: a terminal of the session shows the environment', (name) => {
     expect(sessionEnv({ [name]: 'secret' })).not.toHaveProperty(name);
   });
 
-  it.each(['TOKENS', 'GHOST', 'MY_GH_X', 'API_KEYBOARD', 'SECRET_SANTA'])('keeps %s', (name) => {
+  it.each([
+    'TOKENS',
+    'GHOST',
+    'MY_GH_X',
+    'API_KEYBOARD',
+    'SECRET_SANTA',
+    'KEYBOARD',
+    'PASSWORDS',
+    'MY_TOKEN_COUNT',
+    'REMOTE',
+  ])('keeps %s', (name) => {
     expect(sessionEnv({ [name]: 'a' })).toHaveProperty(name, 'a');
   });
 });

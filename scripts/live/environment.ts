@@ -2,8 +2,12 @@
 import { cleanEnv } from '../vscode-run.mjs';
 import { HOME, TEMP } from './session.ts';
 
-/** Credentials: whoever watches the session can open a terminal in it. */
-const SECRETS = /_(TOKEN|API_KEY|SECRET)$|^(SSH_AUTH_SOCK$|GH_|GITHUB_)/i;
+/**
+ * Credentials, and the sockets and helpers that reach them: whoever watches the session can open a
+ * terminal in it. Names that only contain a word (`KEYBOARD`, `TOKENS`) stay.
+ */
+const SECRETS =
+  /_(TOKEN|API_KEY|SECRET|KEY|PASSWORD)$|^(TOKEN|PASSWORD|SSH_AUTH_SOCK|SSH_ASKPASS|GIT_ASKPASS)$|^(GH_|GITHUB_|REMOTE_CONTAINERS)/i;
 
 /** VS Code puts sockets and caches into the temporary directories. */
 export function sessionEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
