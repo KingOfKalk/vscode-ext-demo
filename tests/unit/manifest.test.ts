@@ -82,11 +82,12 @@ describe('commands', () => {
   );
   const visible = commands.filter((c) => !hidden.has(c.command)).map((c) => c.command);
 
-  it('shows exactly the five commands of the spec in the palette', () => {
+  it('shows exactly the six commands in the palette', () => {
     expect(visible).toEqual([
       'vscodeExtDemo.openWindow',
       'vscodeExtDemo.sayHello',
       'vscodeExtDemo.increment',
+      'vscodeExtDemo.decrement',
       'vscodeExtDemo.reset',
       'vscodeExtDemo.showLog',
     ]);

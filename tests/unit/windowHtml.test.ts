@@ -43,14 +43,15 @@ describe('renderWindowHtml', () => {
     expect(html).toMatch(/^<!DOCTYPE html>\n<html lang="en">/);
   });
 
-  it('has the four element IDs', () => {
-    for (const id of ['message', 'count', 'increment', 'reset']) {
+  it('has the five element IDs', () => {
+    for (const id of ['message', 'count', 'increment', 'decrement', 'reset']) {
       expect(html.match(new RegExp(`id="${id}"`, 'g'))).toHaveLength(1);
     }
   });
 
   it('has real buttons with their texts', () => {
     expect(html).toContain('<button type="button" id="increment">Click me</button>');
+    expect(html).toContain('<button type="button" id="decrement">Decrement</button>');
     expect(html).toContain('<button type="button" id="reset">Reset</button>');
   });
 

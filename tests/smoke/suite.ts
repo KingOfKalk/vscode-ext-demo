@@ -205,6 +205,21 @@ async function step(): Promise<void> {
   assert.equal(getCount(), 0);
 }
 
+async function decrement(): Promise<void> {
+  await setSetting('step', 5);
+  await execute(COMMANDS.increment);
+  await setSetting('step', 3);
+  for (const expected of [2, 0, 0]) {
+    const lines = demoLog().length;
+    await execute(COMMANDS.decrement);
+    assert.equal(getCount(), expected);
+    await until(`the decrement to ${expected} is in the Demo log`, () =>
+      demoLog().slice(lines).includes(`Count changed: ${expected}`),
+    );
+  }
+  assert.deepEqual(problems(demoLog()), [], 'problems in the Demo log');
+}
+
 async function otherCommands(): Promise<void> {
   await execute(COMMANDS.sayHello);
   await execute(COMMANDS.showLog);
@@ -238,6 +253,7 @@ const CHECKS: [name: string, check: () => Promise<void>][] = [
   ['replaces a window that nobody owns', deadWindow],
   ['increments after the window was closed', incrementAfterClose],
   ['adds the step, limits it and resets', step],
+  ['decrements by the step, never below 0', decrement],
   ['says hello, shows the log, opens the settings', otherCommands],
   ['applies a changed setting', settingsChange],
 ];

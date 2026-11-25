@@ -8,7 +8,12 @@ export interface MessageLog {
 }
 
 export interface MessageDeps {
-  store: { readonly count: number; increment(): Promise<void>; reset(): Promise<void> };
+  store: {
+    readonly count: number;
+    increment(): Promise<void>;
+    decrement(): Promise<void>;
+    reset(): Promise<void>;
+  };
   /** The current `message` setting. */
   message: () => string;
   post(message: ToWebview): void;
@@ -21,9 +26,9 @@ export function buildState(count: number, message: string): ToWebview {
 }
 
 /**
- * Handles one message from the window. `ready` is answered with the state at once; `increment`
- * and `reset` go to the store, whose listeners send the new state. Unknown messages are logged
- * and ignored. Never rejects.
+ * Handles one message from the window. `ready` is answered with the state at once; `increment`,
+ * `decrement` and `reset` go to the store, whose listeners send the new state. Unknown messages
+ * are logged and ignored. Never rejects.
  */
 export async function handleWebviewMessage(raw: unknown, deps: MessageDeps): Promise<void> {
   const message = parseToExtension(raw);
@@ -38,6 +43,9 @@ export async function handleWebviewMessage(raw: unknown, deps: MessageDeps): Pro
       return;
     case 'increment':
       await guarded('incrementing the counter', () => deps.store.increment(), deps.onError);
+      return;
+    case 'decrement':
+      await guarded('decrementing the counter', () => deps.store.decrement(), deps.onError);
       return;
     case 'reset':
       await guarded('resetting the counter', () => deps.store.reset(), deps.onError);

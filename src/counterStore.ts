@@ -34,6 +34,11 @@ export class CounterStore {
     return this.set(this.value + this.step());
   }
 
+  /** Like `increment`, but subtracts the step and stops at 0. */
+  decrement(): Promise<void> {
+    return this.set(Math.max(0, this.value - this.step()));
+  }
+
   reset(): Promise<void> {
     return this.set(0);
   }

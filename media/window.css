@@ -47,11 +47,13 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+#decrement,
 #reset {
   color: var(--vscode-button-secondaryForeground);
   background-color: var(--vscode-button-secondaryBackground);
 }
 
+#decrement:hover,
 #reset:hover {
   background-color: var(--vscode-button-secondaryHoverBackground);
 }

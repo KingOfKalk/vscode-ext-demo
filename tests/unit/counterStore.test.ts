@@ -37,6 +37,43 @@ describe('CounterStore', () => {
     expect(store.count).toBe(6);
   });
 
+  it('subtracts the step read at the moment of the decrement', async () => {
+    let step = 1;
+    const storage = new FakeStorage(10);
+    const store = new CounterStore(storage, () => step);
+    await store.decrement();
+    step = 5;
+    await store.decrement();
+    expect(store.count).toBe(4);
+    expect(storage.saved).toEqual([9, 4]);
+  });
+
+  it.each([
+    [0, 1],
+    [3, 5],
+    [5, 5],
+  ])('never goes below 0: from %j with step %j', async (count, step) => {
+    const storage = new FakeStorage(count);
+    const store = new CounterStore(storage, () => step);
+    const listener = vi.fn();
+    store.onDidChange(listener);
+    await store.decrement();
+    expect(store.count).toBe(0);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(0);
+    expect(storage.saved).toEqual([0]);
+  });
+
+  it('ends at 0 after more decrements than the count, without await', async () => {
+    const storage = new FakeStorage(3);
+    const store = new CounterStore(storage, () => 1);
+    const results = Array.from({ length: 10 }, () => store.decrement());
+    expect(store.count).toBe(0);
+    await Promise.all(results);
+    expect(storage.saved.at(-1)).toBe(0);
+    await store.increment();
+    expect(store.count).toBe(1);
+  });
+
   it('resets to 0', async () => {
     const store = new CounterStore(new FakeStorage(4), () => 1);
     await store.reset();

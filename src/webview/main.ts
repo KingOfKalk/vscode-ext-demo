@@ -23,10 +23,14 @@ export function initWindow(doc: Document, api: VsCodeApi): void {
   const message = requireElement(doc, 'message');
   const count = requireElement(doc, 'count');
   const increment = requireElement(doc, 'increment');
+  const decrement = requireElement(doc, 'decrement');
   const reset = requireElement(doc, 'reset');
 
   increment.addEventListener('click', () => {
     api.postMessage({ type: 'increment' });
+  });
+  decrement.addEventListener('click', () => {
+    api.postMessage({ type: 'decrement' });
   });
   reset.addEventListener('click', () => {
     api.postMessage({ type: 'reset' });

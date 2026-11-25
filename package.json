@@ -40,6 +40,11 @@
         "category": "Demo"
       },
       {
+        "command": "vscodeExtDemo.decrement",
+        "title": "Decrement Counter",
+        "category": "Demo"
+      },
+      {
         "command": "vscodeExtDemo.reset",
         "title": "Reset Counter",
         "category": "Demo"
@@ -86,7 +91,7 @@
           "minimum": 1,
           "maximum": 100,
           "order": 2,
-          "description": "How much the counter grows with each increment, from 1 to 100."
+          "description": "How much an increment adds to the counter and a decrement subtracts, from 1 to 100."
         },
         "vscodeExtDemo.showStatusBar": {
           "type": "boolean",

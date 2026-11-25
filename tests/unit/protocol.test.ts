@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseToExtension, parseToWebview } from '../../src/protocol';
 
 describe('parseToExtension', () => {
-  it.each(['ready', 'increment', 'reset'])('accepts %s', (type) => {
+  it.each(['ready', 'increment', 'decrement', 'reset'])('accepts %s', (type) => {
     expect(parseToExtension({ type })).toEqual({ type });
   });
 
