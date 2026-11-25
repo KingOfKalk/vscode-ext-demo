@@ -1,0 +1,8 @@
+{
+  "extends": "../../../scripts/live/tsconfig.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "include": ["."]
+}
