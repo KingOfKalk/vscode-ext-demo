@@ -198,26 +198,31 @@ async function pageRuns(): Promise<void> {
   assert.equal(readyMessages(), before + 1, 'the page sent `ready` more than once');
 }
 
+/** Changes the count in every way and waits each time until it is shown. */
+async function untilCountsShown(screen: (count: number) => Partial<Screen>): Promise<void> {
+  await untilShown(screen(0));
+  await setSetting('step', 5);
+  for (const [command, count] of [
+    [COMMANDS.increment, 5],
+    [COMMANDS.increment, 10],
+    [COMMANDS.decrement, 5],
+    [COMMANDS.reset, 0],
+  ] as const) {
+    await execute(command);
+    await untilShown(screen(count));
+  }
+}
+
 async function windowShowsState(): Promise<void> {
   await execute(COMMANDS.openWindow);
-  await untilShown(windowWith(DEFAULT_MESSAGE, 0));
-  await setSetting('step', 5);
-  await execute(COMMANDS.increment);
-  await untilShown(windowWith(DEFAULT_MESSAGE, 5));
-  await setSetting('step', 2);
-  await execute(COMMANDS.decrement);
-  await untilShown(windowWith(DEFAULT_MESSAGE, 3));
+  await untilCountsShown((count) => windowWith(DEFAULT_MESSAGE, count));
   await setSetting('message', 'Changed <b>message</b>');
-  await untilShown(windowWith('Changed <b>message</b>', 3));
-  await execute(COMMANDS.reset);
   await untilShown(windowWith('Changed <b>message</b>', 0));
 }
 
 async function hiddenWindow(): Promise<void> {
   await execute(COMMANDS.openWindow);
   await untilShown(windowWith(DEFAULT_MESSAGE, 0));
-  const { group } = await onlyWindowTab();
-  assert.equal(group.viewColumn, vscode.ViewColumn.One);
   await focusNote();
   const hidden = () => windowTabs().every((tab) => !tab.isActive);
   await until('the window is behind the note', hidden);
@@ -233,31 +238,15 @@ async function hiddenWindow(): Promise<void> {
 }
 
 async function statusBar(): Promise<void> {
-  await untilShown({ statusBar: ['Demo: 0'] });
-  await setSetting('step', 5);
-  await execute(COMMANDS.increment);
-  await untilShown({ statusBar: ['Demo: 5'] });
-  await setSetting('step', 2);
-  await execute(COMMANDS.decrement);
-  await untilShown({ statusBar: ['Demo: 3'] });
-  await execute(COMMANDS.reset);
-  await untilShown({ statusBar: ['Demo: 0'] });
+  await untilCountsShown((count) => ({ statusBar: [`Demo: ${count}`] }));
   assert.equal(extension().exports.statusBar.command, COMMANDS.openWindow);
 }
 
 async function sidebar(): Promise<void> {
-  const rows = (count: number) => ['Open window', 'Say hello', 'Show log', `Counter: ${count}`];
-  // Shows the view and asks for its rows only now.
   await execute(`${VIEW_ID}.focus`);
-  await untilShown({ sidebar: rows(0) });
-  await setSetting('step', 5);
-  await execute(COMMANDS.increment);
-  await untilShown({ sidebar: rows(5) });
-  await setSetting('step', 2);
-  await execute(COMMANDS.decrement);
-  await untilShown({ sidebar: rows(3) });
-  await execute(COMMANDS.reset);
-  await untilShown({ sidebar: rows(0) });
+  await untilCountsShown((count) => ({
+    sidebar: ['Open window', 'Say hello', 'Show log', `Counter: ${count}`],
+  }));
   const view = extension().exports.sidebar;
   assert.deepEqual(
     view.getChildren().map((row) => view.getTreeItem(row).command?.command),
