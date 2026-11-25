@@ -74,6 +74,26 @@ describe('initWindow', () => {
     observer.disconnect();
   });
 
+  it('touches the count only when it changed, so a screen reader does not read it again', () => {
+    const { dom, document, send, text } = setup();
+    const count = document.getElementById('count');
+    if (!count) throw new Error('no count element');
+    const observer = new dom.window.MutationObserver(() => undefined);
+    observer.observe(count, { childList: true, characterData: true, subtree: true });
+
+    send({ type: 'state', count: 1, message: 'Hello' });
+    expect(observer.takeRecords().length).toBeGreaterThan(0);
+
+    send({ type: 'state', count: 1, message: 'Hi' });
+    expect(observer.takeRecords()).toHaveLength(0);
+    expect(text('message')).toBe('Hi');
+
+    send({ type: 'state', count: 2, message: 'Hi' });
+    expect(observer.takeRecords().length).toBeGreaterThan(0);
+    expect(text('count')).toBe('2');
+    observer.disconnect();
+  });
+
   it('does not count on click; it shows what state says', () => {
     const { send, text, click } = setup();
     send({ type: 'state', count: 3, message: 'm' });
