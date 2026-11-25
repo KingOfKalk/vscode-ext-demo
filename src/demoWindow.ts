@@ -2,7 +2,13 @@ import * as vscode from 'vscode';
 import { VIEW_TYPE } from './ids';
 import { createNonce } from './nonce';
 import { renderWindowHtml } from './windowHtml';
-import type { PanelHandle, VisibleTab, WindowHost, WindowPlace } from './windowController';
+import {
+  isWindowType,
+  type PanelHandle,
+  type VisibleTab,
+  type WindowHost,
+  type WindowPlace,
+} from './windowController';
 
 const TITLE = 'Demo Window';
 
@@ -13,13 +19,13 @@ function showOptions(place: WindowPlace): Parameters<typeof vscode.window.create
     case 'beside':
       return vscode.ViewColumn.Beside;
     default:
-      return { viewColumn: place.column, preserveFocus: place.preserveFocus };
+      // Nobody asked for this window, and the user may be typing elsewhere.
+      return { viewColumn: place.column, preserveFocus: true };
   }
 }
 
 function isWindowTab(tab: vscode.Tab): boolean {
-  // The tab input of a webview panel has the view type with a prefix.
-  return tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith(VIEW_TYPE);
+  return tab.input instanceof vscode.TabInputWebview && isWindowType(tab.input.viewType);
 }
 
 async function closeTabs(tabs: vscode.Tab[]): Promise<void> {

@@ -59,6 +59,10 @@ export function activate(context: vscode.ExtensionContext): DemoApi {
     vscode.window.tabGroups.onDidChangeTabs(() => {
       demoWindow.watch();
     }),
+    // The only event when VS Code sends all tabs again.
+    vscode.window.tabGroups.onDidChangeTabGroups(() => {
+      demoWindow.watch();
+    }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (!event.affectsConfiguration(CONFIG_SECTION)) {
         return;

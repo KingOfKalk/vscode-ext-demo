@@ -5,6 +5,7 @@ import type { Settings } from '../../src/settings';
 import {
   REPLACE_AFTER_MS,
   WindowController,
+  isWindowType,
   type PanelHandle,
   type VisibleTab,
   type WindowHost,
@@ -337,6 +338,7 @@ describe('WindowController.watch', () => {
   }
 
   const wait = (ms: number) => vi.advanceTimersByTimeAsync(ms);
+  const IN_BOTH_HALVES = [REPLACE_AFTER_MS / 4, REPLACE_AFTER_MS - 1];
 
   it('replaces a window that is visible on activation and not handed over', async () => {
     const { controller, panels, created, close } = setupDead();
@@ -344,7 +346,7 @@ describe('WindowController.watch', () => {
     await wait(REPLACE_AFTER_MS - 1);
     expect(panels).toHaveLength(0);
     await wait(1);
-    expect(created).toEqual([{ column: 1, preserveFocus: true }]);
+    expect(created).toEqual([{ column: 1 }]);
     expect(close).toHaveBeenCalledTimes(1);
   });
 
@@ -364,11 +366,11 @@ describe('WindowController.watch', () => {
     expect(calls.indexOf('create')).toBeLessThan(calls.indexOf('closeDead'));
   });
 
-  it('stays in the group of the dead window and never takes the focus', async () => {
+  it('stays in the group of the dead window', async () => {
     const { controller, created } = setupDead({ column: 2 });
     controller.watch();
     await wait(REPLACE_AFTER_MS);
-    expect(created).toEqual([{ column: 2, preserveFocus: true }]);
+    expect(created).toEqual([{ column: 2 }]);
   });
 
   it('leaves a hidden window alone until it is shown', async () => {
@@ -386,19 +388,22 @@ describe('WindowController.watch', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
-  it('gives a window that is hidden and shown again the whole time', async () => {
-    const { controller, host, panels, dead } = setupDead();
-    controller.watch();
-    await wait(REPLACE_AFTER_MS - 1);
-    host.visible = undefined;
-    controller.watch();
-    host.visible = dead;
-    controller.watch();
-    await wait(REPLACE_AFTER_MS - 1);
-    expect(panels).toHaveLength(0);
-    await wait(1);
-    expect(panels).toHaveLength(1);
-  });
+  it.each(IN_BOTH_HALVES)(
+    'gives a window that is hidden and shown again after %i ms the whole time',
+    async (ms) => {
+      const { controller, host, panels, dead } = setupDead();
+      controller.watch();
+      await wait(ms);
+      host.visible = undefined;
+      controller.watch();
+      host.visible = dead;
+      controller.watch();
+      await wait(REPLACE_AFTER_MS - 1);
+      expect(panels).toHaveLength(0);
+      await wait(1);
+      expect(panels).toHaveLength(1);
+    },
+  );
 
   it('does not wait longer because tabs keep changing', async () => {
     const { controller, panels } = setupDead();
@@ -423,7 +428,7 @@ describe('WindowController.watch', () => {
     controller.watch();
     host.visible = { ...dead, column: 3 };
     await wait(REPLACE_AFTER_MS);
-    expect(created).toEqual([{ column: 3, preserveFocus: true }]);
+    expect(created).toEqual([{ column: 3 }]);
   });
 
   it('does nothing if VS Code restored the window before, as after a window reload', async () => {
@@ -435,10 +440,23 @@ describe('WindowController.watch', () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it('does nothing if VS Code restores the window while it waits', async () => {
+  it.each(IN_BOTH_HALVES)('does nothing if VS Code restores the window after %i ms', async (ms) => {
     const { controller, panels, calls, close } = setupDead();
     controller.watch();
-    await wait(REPLACE_AFTER_MS - 1);
+    await wait(ms);
+    const restored = new FakePanel(calls);
+    controller.restore(restored);
+    await wait(10 * REPLACE_AFTER_MS);
+    expect(panels).toHaveLength(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(restored.disposed).toBe(false);
+  });
+
+  it('does nothing if the extension host was blocked and VS Code restores the window after it', async () => {
+    const { controller, panels, calls, close } = setupDead();
+    controller.watch();
+    // After a block, a timer that is due runs before the messages that came in the meantime.
+    vi.advanceTimersToNextTimer();
     const restored = new FakePanel(calls);
     controller.restore(restored);
     await wait(10 * REPLACE_AFTER_MS);
@@ -461,6 +479,18 @@ describe('WindowController.watch', () => {
     expect(panels).toHaveLength(1);
     expect(panels[0]?.disposed).toBe(false);
     expect(restored.disposed).toBe(true);
+    // Nobody asked for the window, so it does not come to the front.
+    expect(panels[0]?.reveals).toBe(0);
+  });
+
+  it('reveals the new window again for a restored one once the dead one is closed', async () => {
+    const { controller, panels, calls } = setupDead();
+    controller.watch();
+    await wait(REPLACE_AFTER_MS);
+    const restored = new FakePanel(calls);
+    controller.restore(restored);
+    expect(restored.disposed).toBe(true);
+    expect(panels[0]?.reveals).toBe(1);
   });
 
   it('opens one window if the user opens it while it waits', async () => {
@@ -491,17 +521,21 @@ describe('WindowController.watch', () => {
     expect(host.closeStale).not.toHaveBeenCalled();
   });
 
-  it('does nothing after dispose, neither for a running wait nor for a change of tabs', async () => {
-    const { controller, panels, close } = setupDead();
-    controller.watch();
-    controller.dispose();
-    expect(vi.getTimerCount()).toBe(0);
-    controller.watch();
-    expect(vi.getTimerCount()).toBe(0);
-    await wait(10 * REPLACE_AFTER_MS);
-    expect(panels).toHaveLength(0);
-    expect(close).not.toHaveBeenCalled();
-  });
+  it.each(IN_BOTH_HALVES)(
+    'does nothing after dispose, %i ms into the wait, nor for a later change of tabs',
+    async (ms) => {
+      const { controller, panels, close } = setupDead();
+      controller.watch();
+      await wait(ms);
+      controller.dispose();
+      expect(vi.getTimerCount()).toBe(0);
+      controller.watch();
+      expect(vi.getTimerCount()).toBe(0);
+      await wait(10 * REPLACE_AFTER_MS);
+      expect(panels).toHaveLength(0);
+      expect(close).not.toHaveBeenCalled();
+    },
+  );
 
   it('leaves no timer behind once the window is replaced', async () => {
     const { controller } = setupDead();
@@ -517,7 +551,7 @@ describe('WindowController.watch', () => {
     });
     controller.watch();
     await wait(REPLACE_AFTER_MS);
-    expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('no way'));
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Could not close the dead window: no way');
     expect(onError).not.toHaveBeenCalled();
     controller.watch();
     await wait(10 * REPLACE_AFTER_MS);
@@ -532,8 +566,37 @@ describe('WindowController.watch', () => {
       throw new Error('no tabs');
     });
     await wait(REPLACE_AFTER_MS);
-    expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('no tabs'));
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Could not look at the tabs: no tabs');
     expect(panels).toHaveLength(0);
+  });
+
+  it('logs a failure to look at the tabs when they change and tries again later', async () => {
+    const { controller, host, panels, warn } = setupDead();
+    vi.spyOn(host, 'visibleTab').mockImplementationOnce(() => {
+      throw new Error('no tabs');
+    });
+    expect(() => {
+      controller.watch();
+    }).not.toThrow();
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Could not look at the tabs: no tabs');
+    controller.watch();
+    await wait(REPLACE_AFTER_MS);
+    expect(panels).toHaveLength(1);
+  });
+
+  it('closes the dead window also if the new one has no page', async () => {
+    const { controller, panels, close, warn } = setupDead();
+    const setHtml = vi.spyOn(FakePanel.prototype, 'setHtml').mockImplementation(() => {
+      throw new Error('no page');
+    });
+    controller.watch();
+    await wait(REPLACE_AFTER_MS);
+    setHtml.mockRestore();
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Could not open a new window: no page');
+    expect(close).toHaveBeenCalledTimes(1);
+    controller.watch();
+    await wait(REPLACE_AFTER_MS);
+    expect(panels).toHaveLength(1);
   });
 
   it('logs a failure to create the window, keeps the dead one and tries again later', async () => {
@@ -543,12 +606,30 @@ describe('WindowController.watch', () => {
     });
     controller.watch();
     await wait(REPLACE_AFTER_MS);
-    expect(warn).toHaveBeenCalledExactlyOnceWith(expect.stringContaining('boom'));
+    expect(warn).toHaveBeenCalledExactlyOnceWith('Could not open a new window: boom');
     expect(onError).not.toHaveBeenCalled();
     expect(close).not.toHaveBeenCalled();
     controller.watch();
     await wait(REPLACE_AFTER_MS);
     expect(panels).toHaveLength(1);
     expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('isWindowType', () => {
+  it.each(['vscodeExtDemo.window', 'mainThreadWebview-vscodeExtDemo.window'])(
+    'knows %s as the Demo window',
+    (type) => {
+      expect(isWindowType(type)).toBe(true);
+    },
+  );
+
+  it.each([
+    'mainThreadWebview-other.vscodeExtDemo.window',
+    'mainThreadWebview-myvscodeExtDemo.window',
+    'mainThreadWebview-vscodeExtDemo.window2',
+    '',
+  ])('does not take %j for it', (type) => {
+    expect(isWindowType(type)).toBe(false);
   });
 });
