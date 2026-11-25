@@ -101,7 +101,7 @@ async function main() {
   });
   if (positionals.length > 1) throw new Error('expected at most one .vsix');
   const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
-  if (positionals.length === 0) run('npm', ['run', 'package'], { cwd: ROOT });
+  if (positionals.length === 0) run(process.execPath, [join(ROOT, 'scripts/package.mjs')]);
   const vsix = resolve(positionals[0] ?? join(ROOT, `${manifest.name}-${manifest.version}.vsix`));
   if (!existsSync(vsix)) throw new Error(`${vsix} does not exist`);
   const version = minimumVersion(manifest.engines.vscode);

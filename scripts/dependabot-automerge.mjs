@@ -16,6 +16,8 @@ export const MANUAL_DEPENDENCIES = [
   // Produce the shipped code.
   'esbuild',
   'typescript',
+  // Writes the shipped .vsix; CI compares only the file names in it.
+  '@vscode/vsce',
   // Drives the live session, which CI does not run.
   'playwright-core',
   // They get the App key or run next to a write token; CI does not test that.
