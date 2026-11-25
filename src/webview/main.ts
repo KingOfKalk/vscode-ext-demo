@@ -45,7 +45,10 @@ export function initWindow(doc: Document, api: VsCodeApi): void {
     if (message.textContent !== state.message) {
       message.textContent = state.message;
     }
-    count.textContent = String(state.count);
+    const countText = String(state.count);
+    if (count.textContent !== countText) {
+      count.textContent = countText;
+    }
   });
 
   api.postMessage({ type: 'ready' });
