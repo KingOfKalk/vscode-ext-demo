@@ -117,13 +117,17 @@ describe('commands', () => {
   });
 
   it('uses no command ID in src/ that is not in ids.ts', () => {
-    const dir = new URL('../../src/', import.meta.url);
-    const files = readdirSync(dir, { withFileTypes: true })
-      .filter((f) => f.isFile() && f.name.endsWith('.ts') && f.name !== 'ids.ts')
-      .map((f) => f.name);
-    expect(files.length).toBeGreaterThan(0);
-    for (const name of files) {
-      expect(readFileSync(new URL(name, dir), 'utf8'), name).not.toContain('vscodeExtDemo');
+    // The extension host code and the code of the webview.
+    const dirs = ['../../src/', '../../src/webview/'].map((path) => new URL(path, import.meta.url));
+    const files = dirs.flatMap((dir) =>
+      readdirSync(dir, { withFileTypes: true })
+        .filter((f) => f.isFile() && f.name.endsWith('.ts') && f.name !== 'ids.ts')
+        .map((f) => new URL(f.name, dir)),
+    );
+    expect(files.some((file) => file.pathname.endsWith('/src/webview/main.ts'))).toBe(true);
+    expect(files.length).toBeGreaterThan(1);
+    for (const file of files) {
+      expect(readFileSync(file, 'utf8'), file.pathname).not.toContain('vscodeExtDemo');
     }
   });
 });
