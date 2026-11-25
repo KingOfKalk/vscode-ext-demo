@@ -150,6 +150,31 @@ async function pageRuns(): Promise<void> {
   assert.equal(readyMessages(), before + 1, 'the page sent `ready` more than once');
 }
 
+async function deadWindow(): Promise<void> {
+  const note = await vscode.workspace.openTextDocument(NOTE);
+  await vscode.window.showTextDocument(note, { viewColumn: vscode.ViewColumn.One, preview: false });
+  const before = readyMessages();
+  const lines = demoLog().length;
+  // The extension does not own it, like a window that is still there after a restart of the
+  // extension host. The suite cannot restart its own host.
+  const dead = vscode.window.createWebviewPanel(VIEW_TYPE, 'Dead Window', {
+    viewColumn: vscode.ViewColumn.Two,
+    preserveFocus: true,
+  });
+  let closed = false;
+  dead.onDidDispose(() => {
+    closed = true;
+  });
+  await until('the dead window is closed', () => closed);
+  await until('the page of the new window sends `ready`', () => readyMessages() > before);
+  const tab = await onlyWindowTab();
+  assert.equal(tab.group.viewColumn, vscode.ViewColumn.Two, 'the window is in another group');
+  const { activeTabGroup } = vscode.window.tabGroups;
+  assert.equal(activeTabGroup.viewColumn, vscode.ViewColumn.One, 'the window took the focus');
+  assert.equal(readyMessages(), before + 1, 'more than one page sent `ready`');
+  assert.deepEqual(problems(demoLog().slice(lines)), [], 'problems in the Demo log');
+}
+
 async function incrementAfterClose(): Promise<void> {
   const before = readyMessages();
   await execute(COMMANDS.openWindow);
@@ -210,6 +235,7 @@ const CHECKS: [name: string, check: () => Promise<void>][] = [
   ['opens one window, also for quick calls', oneWindow],
   ['opens the window where openLocation says', openLocation],
   ['runs the page of the window', pageRuns],
+  ['replaces a window that nobody owns', deadWindow],
   ['increments after the window was closed', incrementAfterClose],
   ['adds the step, limits it and resets', step],
   ['says hello, shows the log, opens the settings', otherCommands],
