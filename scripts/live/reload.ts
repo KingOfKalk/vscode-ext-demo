@@ -2,20 +2,20 @@
 // The profile stays, so does the count; the extension host starts again with the new code.
 import { createHash } from 'node:crypto';
 import { globSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
+import {
+  explainNoActivation,
+  markLog,
+  readActivationState,
+  type ActivationSource,
+  type NoActivation,
+} from './activation.ts';
 import { sessionEnv } from './environment.ts';
 import { ActionError, guard, userError } from './errors.ts';
 import { assertNoOverlay, runCommand } from './interact.ts';
-import {
-  isNewActivation,
-  lastErrorBlock,
-  readActivations,
-  readLog,
-  runLogs,
-  tail,
-} from './logs.ts';
+import { isNewActivation, readActivations, runLogs, decideActivation } from './logs.ts';
 import { waitFor } from './processes.ts';
-import { PROFILE, ROOT, VSCODE_LOGS } from './session.ts';
+import { PROFILE, ROOT, VSCODE_LOGS, vscodeOfSessionRuns } from './session.ts';
 import {
   attach,
   connect,
@@ -99,32 +99,9 @@ function notRunning(error: unknown): ActionError {
   return new ActionError(`the new files are installed but not running: ${text}`);
 }
 
-/**
- * The failure of a reload that the extension did not follow with an activation. The reason is in
- * the log of the extension host (an exception of `activate()` is there, not in the Demo log, which
- * the extension has not written yet), so both logs are named and their ends printed.
- */
-export function describeNoActivation(
-  seconds: number,
-  demo: { where: string; end: string },
-  host: { where: string; end: string; error?: string },
-): string {
-  const indent = (text: string) => text.split('\n').map((line) => `  ${line}`);
-  return [
-    `the extension did not activate again within ${seconds} s`,
-    ...(host.error === undefined
-      ? []
-      : [`the last error in the extension host log (${host.where}):`, ...indent(host.error)]),
-    `the end of the extension host log (${host.where}):`,
-    ...indent(host.end),
-    `the end of the Demo log (${demo.where}):`,
-    ...indent(demo.end),
-  ].join('\n');
-}
-
 /** Builds, reinstalls over the same version, reloads the window and waits for the new activation. */
 export async function reload(): Promise<string> {
-  ownRunningSession();
+  const session = ownRunningSession();
   const id = extensionId();
   // The window first: a build and an install are no use if the window cannot take the command.
   const open = await guard('cannot reach the window', async () => {
@@ -164,35 +141,37 @@ export async function reload(): Promise<string> {
 
     try {
       const was = readActivations(VSCODE_LOGS, id);
-      // The host log of a run keeps the hosts before the reload: only what is new can be the reason.
-      const hostBefore = runLogs(VSCODE_LOGS, [], id)?.host;
-      const hostLinesBefore = hostBefore ? (readLog(hostBefore) ?? '').split('\n').length : 0;
+      // The logs of a run keep what came before the reload: only what is new can be the reason.
+      const before = runLogs(VSCODE_LOGS, [], id);
+      const marks = { host: markLog(before?.host), renderer: markLog(before?.renderer) };
+      const source: ActivationSource = {
+        logs: VSCODE_LOGS,
+        before: [],
+        id,
+        vscodeRuns: () => vscodeOfSessionRuns(session),
+        isActivated: () => isNewActivation(was, readActivations(VSCODE_LOGS, id)),
+        marks,
+      };
       await guard('cannot reload the window', () => runCommand(open, RELOAD_COMMAND));
-      const now = await waitFor(
+      // The first event ends the wait; the time limit is only for a hang, where none comes.
+      const outcome = await waitFor(
         () => 'the extension activates again',
         () => {
-          const logs = readActivations(VSCODE_LOGS, id);
-          return isNewActivation(was, logs) ? logs : undefined;
+          const { state } = readActivationState(source);
+          const decision = decideActivation(state);
+          return decision === undefined ? undefined : { decision, state };
         },
         { timeoutMs: ACTIVATION_TIMEOUT_MS },
-      ).catch(() => {
-        const found = runLogs(VSCODE_LOGS, [], id);
-        const shown = (file: string | undefined, end: number) => ({
-          where: file === undefined ? '(no log yet)' : relative(PROFILE, file),
-          end: file === undefined ? '(missing)' : tail(file, end),
-        });
-        const host = found?.host;
-        const hostText = host === undefined ? '' : (readLog(host) ?? '');
-        const fresh =
-          host === hostBefore ? hostText.split('\n').slice(hostLinesBefore).join('\n') : hostText;
-        const error = lastErrorBlock(fresh, 8);
-        throw new ActionError(
-          describeNoActivation(ACTIVATION_TIMEOUT_MS / 1000, shown(found?.demo, 3), {
-            ...shown(host, 5),
-            ...(error === undefined ? {} : { error }),
-          }),
-        );
-      });
+      ).catch(() => undefined);
+      if (outcome?.decision !== 'activated') {
+        const why: NoActivation = !outcome
+          ? { kind: 'timeout', seconds: ACTIVATION_TIMEOUT_MS / 1000 }
+          : {
+              kind: outcome.state.failed ? 'failed' : outcome.state.vscodeEnded ? 'vscode' : 'host',
+            };
+        throw new ActionError(explainNoActivation(why, source, PROFILE));
+      }
+      const now = readActivations(VSCODE_LOGS, id);
       const ready = await guard('the window did not come back', () => attach(30_000));
       await ready.close().catch(() => undefined);
 

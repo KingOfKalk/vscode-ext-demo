@@ -5,9 +5,11 @@ import { chromium, type Browser, type Frame, type Page } from 'playwright-core';
 import { installVsix, QUIET_FLAGS, QUIET_SETTINGS, run, vscodeFlags } from '../vscode-run.mjs';
 import { ensureVscode, minimumVersion } from '../vscode.mjs';
 import { DEBUG_PORT, INSPECT_PORT } from './novnc.ts';
-import { leaderRuns, waitFor } from './processes.ts';
+import { waitFor } from './processes.ts';
 import {
   assertOwnSession,
+  describeSessionProblem,
+  NO_SESSION,
   EXTENSIONS,
   HOME,
   PROFILE,
@@ -16,6 +18,7 @@ import {
   sessionState,
   TEMP,
   WORKSPACE,
+  vscodeOfSessionRuns,
   type Session,
 } from './session.ts';
 
@@ -160,10 +163,12 @@ export async function connect(): Promise<Connection> {
 /** The session of this checkout, with VS Code running; throws if there is none. */
 export function ownRunningSession(): Session {
   const session = readSession();
-  const vscode = session?.processes.find(({ name }) => name === 'vscode');
-  if (!session || !vscode || sessionState(session) !== 'running' || !leaderRuns(vscode)) {
-    throw new Error('no live session runs; start one: npm run live -- start');
-  }
+  const problem = describeSessionProblem(
+    session,
+    session && sessionState(session),
+    session !== undefined && vscodeOfSessionRuns(session),
+  );
+  if (!session || problem !== undefined) throw new Error(problem ?? NO_SESSION);
   assertOwnSession(session);
   return session;
 }

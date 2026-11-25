@@ -19,6 +19,8 @@ import {
   abandonStart,
   assertOwnSession,
   createSession,
+  describeAlreadyRunning,
+  describeSessionProblem,
   ensureRunDir,
   readSession,
   removeSession,
@@ -295,5 +297,48 @@ describe('abandonStart', () => {
     );
     expect(failure).toHaveProperty('message', 'could not end xvfb');
     expect(readSession(dir)?.processes).toEqual(processes);
+  });
+});
+
+describe('describeSessionProblem', () => {
+  const session = makeSession();
+
+  it('has none for a running session with VS Code', () => {
+    expect(describeSessionProblem(session, 'running', true)).toBeUndefined();
+  });
+
+  it('says there is none to use without a session or if nothing of it runs', () => {
+    expect(describeSessionProblem(undefined, undefined, false)).toBe(
+      'no live session runs; start one: npm run live -- start',
+    );
+    expect(describeSessionProblem(session, 'gone', false)).toBe(
+      'no live session runs; start one: npm run live -- start',
+    );
+  });
+
+  it('says to wait for a start that is at work', () => {
+    expect(describeSessionProblem(session, 'starting', false)).toBe(
+      'a live session is still starting (process 1); wait for its start to end',
+    );
+  });
+
+  it('says to stop, then start, if VS Code ended but the rest of the session runs', () => {
+    expect(describeSessionProblem(session, 'running', false)).toBe(
+      'VS Code of the live session has ended, the rest of it still runs; stop, then start: npm run live -- stop, then npm run live -- start',
+    );
+  });
+});
+
+describe('describeAlreadyRunning', () => {
+  it('says to stop it first', () => {
+    expect(describeAlreadyRunning(true)).toBe(
+      'a live session is already running; stop it first: npm run live -- stop',
+    );
+  });
+
+  it('says to stop, then start, if VS Code of it ended', () => {
+    expect(describeAlreadyRunning(false)).toBe(
+      'a live session is already running, but its VS Code has ended; stop, then start: npm run live -- stop, then npm run live -- start',
+    );
   });
 });

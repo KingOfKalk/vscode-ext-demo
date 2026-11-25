@@ -3,11 +3,16 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  completeLines,
+  decideActivation,
   formatSection,
+  hasActivationFailed,
+  hasHostTerminated,
   isActivated,
   isNewActivation,
   lastErrorBlock,
   lastLines,
+  linesAfter,
   listRuns,
   parseSettingsLine,
   readActivations,
@@ -96,6 +101,7 @@ describe('isActivated', () => {
     expect(runLogs(logs, [], ID)).toEqual({
       demo: join(logs, demo('1')),
       host: join(logs, '1/window1/exthost/exthost.log'),
+      renderer: join(logs, '1/window1/renderer.log'),
     });
     expect(runLogs(logs, ['1'], ID)).toBeUndefined();
   });
@@ -281,5 +287,111 @@ describe('lastErrorBlock', () => {
   it('is undefined without an error; a word in a message is no error line', () => {
     expect(lastErrorBlock(`${T} [info] [error] not one`, 5)).toBeUndefined();
     expect(lastErrorBlock('', 5)).toBeUndefined();
+  });
+});
+
+describe('hasActivationFailed', () => {
+  const T = '2026-11-25 11:29:19.679';
+  const failed = `${T} [error] Activating extension ${ID} failed due to an error:`;
+
+  it('finds the line of the extension host', () => {
+    expect(hasActivationFailed(`${T} [info] one\n${failed}\n${T} [error] Error: x\n`, ID)).toBe(
+      true,
+    );
+  });
+
+  it('is false for a log without it', () => {
+    expect(hasActivationFailed('', ID)).toBe(false);
+    expect(hasActivationFailed(`${T} [info] Extension activated, count 0\n`, ID)).toBe(false);
+  });
+
+  it('takes only an error line that starts at the beginning of a line', () => {
+    expect(hasActivationFailed(`${T} [info] Activating extension ${ID} failed`, ID)).toBe(false);
+    expect(
+      hasActivationFailed(`${T} [info] saw: [error] Activating extension ${ID} failed`, ID),
+    ).toBe(false);
+    expect(hasActivationFailed(`  ${failed}`, ID)).toBe(false);
+  });
+
+  it('takes only the extension asked for', () => {
+    expect(hasActivationFailed(failed.replace(ID, 'someone.else'), ID)).toBe(false);
+    expect(hasActivationFailed(failed.replace(ID, `${ID}-more`), ID)).toBe(false);
+  });
+
+  it('takes the ID in quotes', () => {
+    expect(hasActivationFailed(failed.replace(ID, `'${ID}'`), ID)).toBe(true);
+  });
+});
+
+describe('hasHostTerminated', () => {
+  const T = '2026-11-25 11:30:24.754';
+
+  it('finds the line of a window that lost its extension host', () => {
+    expect(
+      hasHostTerminated(
+        `${T} [error] Extension host (LocalProcess pid: 2734) terminated unexpectedly. The following extensions were running: a, b`,
+      ),
+    ).toBe(true);
+  });
+
+  it('is false for a log without it, and for a line that only quotes it', () => {
+    expect(hasHostTerminated('')).toBe(false);
+    expect(hasHostTerminated(`${T} [info] Started local extension host with pid 2827.`)).toBe(
+      false,
+    );
+    expect(
+      hasHostTerminated(
+        `${T} [info] x: [error] Extension host (LocalProcess pid: 1) terminated unexpectedly.`,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe('completeLines and linesAfter', () => {
+  it('counts the lines that end with a newline', () => {
+    expect(completeLines('')).toBe(0);
+    expect(completeLines('a\nb\n')).toBe(2);
+    expect(completeLines('a\nb')).toBe(1);
+  });
+
+  it('keeps what a log got after its first lines, also the very next line', () => {
+    expect(linesAfter('a\nb\nc\n', completeLines('a\nb\n'))).toBe('c\n');
+  });
+
+  it('is empty if nothing was added, and all if the log was new', () => {
+    expect(linesAfter('a\nb\n', completeLines('a\nb\n'))).toBe('');
+    expect(linesAfter('a\nb\n', 0)).toBe('a\nb\n');
+  });
+});
+
+describe('decideActivation', () => {
+  const none = { activated: false, failed: false, vscodeEnded: false, hostEnded: false };
+
+  it('waits while no event came', () => {
+    expect(decideActivation(none)).toBeUndefined();
+  });
+
+  it('ends on the activation', () => {
+    expect(decideActivation({ ...none, activated: true })).toBe('activated');
+  });
+
+  it('ends at once on a failed activation', () => {
+    expect(decideActivation({ ...none, failed: true })).toBe('failed');
+  });
+
+  it('ends at once if VS Code or the extension host ended', () => {
+    expect(decideActivation({ ...none, vscodeEnded: true })).toBe('ended');
+    expect(decideActivation({ ...none, hostEnded: true })).toBe('ended');
+  });
+
+  it('prefers the failure, which has a reason, to an end that follows it', () => {
+    expect(decideActivation({ ...none, failed: true, vscodeEnded: true })).toBe('failed');
+    expect(decideActivation({ ...none, failed: true, hostEnded: true })).toBe('failed');
+  });
+
+  it('prefers the activation: the extension runs, whatever came before', () => {
+    expect(
+      decideActivation({ activated: true, failed: true, vscodeEnded: true, hostEnded: true }),
+    ).toBe('activated');
   });
 });

@@ -140,6 +140,45 @@ export function sessionState(session: Session): 'starting' | 'running' | 'gone' 
   return session.processes.some(groupRuns) ? 'running' : 'gone';
 }
 
+/** For a command that needs a session when there is none. */
+export const NO_SESSION = 'no live session runs; start one: npm run live -- start';
+const STOP_THEN_START = 'stop, then start: npm run live -- stop, then npm run live -- start';
+
+/**
+ * Why a command that needs VS Code of the session cannot go on; undefined if it can.
+ * @param state undefined if there is no session
+ * @param vscodeRuns whether the first process of VS Code runs
+ */
+export function describeSessionProblem(
+  session: Session | undefined,
+  state: ReturnType<typeof sessionState> | undefined,
+  vscodeRuns: boolean,
+): string | undefined {
+  if (!session || state === undefined || state === 'gone') {
+    return NO_SESSION;
+  }
+  if (state === 'starting') {
+    return `a live session is still starting (process ${session.starter.pid}); wait for its start to end`;
+  }
+  if (!vscodeRuns) {
+    return `VS Code of the live session has ended, the rest of it still runs; ${STOP_THEN_START}`;
+  }
+  return undefined;
+}
+
+/** What `start` says if the session file says something runs. */
+export function describeAlreadyRunning(vscodeRuns: boolean): string {
+  return vscodeRuns
+    ? 'a live session is already running; stop it first: npm run live -- stop'
+    : `a live session is already running, but its VS Code has ended; ${STOP_THEN_START}`;
+}
+
+/** Whether VS Code of the session runs. */
+export function vscodeOfSessionRuns(session: Session): boolean {
+  const vscode = session.processes.find(({ name }) => name === 'vscode');
+  return vscode !== undefined && leaderRuns(vscode);
+}
+
 /**
  * Ends what runs, VS Code first; throws at the end if something does not end.
  * @param stopOne injected by the tests
