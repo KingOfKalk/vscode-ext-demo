@@ -104,20 +104,39 @@ function notificationLines(nodes: readonly AriaNode[]): string[] {
 function panelLines(nodes: readonly AriaNode[] | undefined): string[] {
   if (!nodes) return [];
   const tab = nodes.find(({ role, states }) => role === 'tab' && states.includes('selected'));
-  const channel = nodes.find(
-    ({ role, states }) => role === 'option' && states.includes('selected'),
-  );
+  // Other tabs have selected options, too (the list of terminals, the rows of Problems).
+  const channel = /^Output\b/.test(tab?.name ?? '')
+    ? nodes.find(({ role, states }) => role === 'option' && states.includes('selected'))
+    : undefined;
   return [`Panel: ${tab?.name ?? 'unknown'}${channel ? ` | channel: ${channel.name}` : ''}`];
 }
 
-/** A modal dialog: its name starts with the severity, its buttons are the direct children. */
+/** Whether a node lies below a toolbar: the buttons there (Close Dialog) are no choices. */
+function inToolbar(nodes: readonly AriaNode[], index: number): boolean {
+  let depth = nodes[index]?.depth ?? 0;
+  for (let i = index - 1; i >= 0 && depth > 0; i--) {
+    const node = nodes[i];
+    if (node && node.depth < depth) {
+      if (node.role === 'toolbar') return true;
+      depth = node.depth;
+    }
+  }
+  return false;
+}
+
+/**
+ * A modal dialog: its name starts with the severity, its buttons are the choices. They are found at
+ * any depth, and also if the tree has no `dialog` node; the toolbar (Close Dialog) is no choice.
+ */
 function dialogLines(nodes: readonly AriaNode[] | undefined): string[] {
-  const dialog = nodes?.find(({ role }) => role === 'dialog');
-  if (!nodes || !dialog) return [];
+  if (!nodes) return [];
+  const dialog = nodes.find(({ role }) => role === 'dialog');
   const buttons = nodes
-    .filter(({ role, depth }) => role === 'button' && depth === dialog.depth + 1)
+    .filter(({ role }, index) => role === 'button' && !inToolbar(nodes, index))
     .map(({ name }) => name);
-  return [`Dialog: ${dialog.name} | buttons: ${buttons.join(' | ')} (key Escape cancels it)`];
+  return [
+    `Dialog: ${dialog?.name ?? '(no title)'} | buttons: ${buttons.length > 0 ? buttons.join(' | ') : 'none'} (key Escape cancels it)`,
+  ];
 }
 
 function quickInputLines(nodes: readonly AriaNode[] | undefined): string[] {

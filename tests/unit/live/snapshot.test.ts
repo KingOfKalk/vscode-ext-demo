@@ -152,6 +152,37 @@ describe('formatSnapshot', () => {
     );
   });
 
+  it('shows a channel only if the selected tab is Output, also if a list there has a selected option', () => {
+    const terminal = `${TERMINAL_PANEL}\n- toolbar:\n  - combobox "Switch Terminal":\n    - option "bash" [selected]`;
+    expect(formatSnapshot(ui({ panel: terminal }))).toContain(
+      'Panel: Terminal (Ctrl+`)\nStatus bar',
+    );
+    const problems = `- tablist:\n  - tab "Problems (Ctrl+Shift+M)" [selected]: Problems\n- listbox:\n  - option "src" [selected]`;
+    expect(formatSnapshot(ui({ panel: problems }))).toContain(
+      'Panel: Problems (Ctrl+Shift+M)\nStatus bar',
+    );
+  });
+
+  it('shows a dialog whose buttons are nested deeper', () => {
+    const nested = `- dialog "Info Delete it?":\n  - generic:\n    - button "Delete"\n    - button "Cancel"\n  - toolbar:\n    - button "Close Dialog": `;
+    expect(formatSnapshot(ui({ dialog: nested }))).toContain(
+      'Dialog: Info Delete it? | buttons: Delete | Cancel (key Escape cancels it)',
+    );
+  });
+
+  it('shows a dialog that has no dialog node, with its buttons', () => {
+    const bare = `- generic:\n  - text: Really?\n  - button "Yes"\n  - button "No"\n  - toolbar:\n    - button "Close Dialog": `;
+    expect(formatSnapshot(ui({ dialog: bare }))).toContain(
+      'Dialog: (no title) | buttons: Yes | No (key Escape cancels it)',
+    );
+  });
+
+  it('shows a dialog without buttons as having none', () => {
+    expect(formatSnapshot(ui({ dialog: '- dialog "Info Hi"' }))).toContain(
+      'Dialog: Info Hi | buttons: none (key Escape cancels it)',
+    );
+  });
+
   it('shows the quick input with its text and its first rows, only if it is open', () => {
     expect(formatSnapshot(ui())).not.toContain('Quick input');
     expect(formatSnapshot(ui({ quickInput: QUICK }))).toMatch(
