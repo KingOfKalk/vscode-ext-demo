@@ -3,3 +3,6 @@ dist/
 *.vsix
 .vscode-live/
 .vscode-test/
+
+# Tracked, although a global ignore file may list it.
+!.vscode/
