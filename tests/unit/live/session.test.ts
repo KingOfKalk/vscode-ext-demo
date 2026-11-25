@@ -16,11 +16,13 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 import { bootId, identify, type ProcessInfo } from '../../../scripts/live/processes.ts';
 import {
+  abandonStart,
   assertOwnSession,
   createSession,
   ensureRunDir,
   readSession,
   removeSession,
+  ownedElsewhere,
   ROOT,
   saveSession,
   sessionState,
@@ -245,5 +247,53 @@ describe('stopProcesses', () => {
     await expect(stop).rejects.toThrow('could not end vscode, x11vnc');
     await expect(stop).rejects.toHaveProperty('cause.message', 'no vscode');
     expect(calls).toEqual(['vscode', 'x11vnc', 'xvfb']);
+  });
+});
+
+describe('ownedElsewhere', () => {
+  it('is false for this checkout', () => {
+    expect(ownedElsewhere(makeSession())).toBe(false);
+  });
+
+  it('is true for another checkout that is there', () => {
+    expect(ownedElsewhere(makeSession({ root: parent }))).toBe(true);
+  });
+
+  it('is false for a checkout that is gone: nobody can stop it there', () => {
+    expect(ownedElsewhere(makeSession({ root: join(parent, 'gone') }))).toBe(false);
+  });
+});
+
+describe('abandonStart', () => {
+  const processes: ProcessInfo[] = [
+    { name: 'xvfb', pid: 1, started: '1' },
+    { name: 'vscode', pid: 3, started: '1' },
+  ];
+
+  function started(): Session {
+    ensureRunDir(dir);
+    const session = makeSession({ state: 'starting', processes });
+    createSession(session, dir);
+    writeFileSync(join(dir, 'novnc-tokens'), '');
+    return session;
+  }
+
+  it('ends what runs and removes the session file', async () => {
+    const session = started();
+    const failure = await abandonStart(session, () => Promise.resolve('stopped'), dir);
+    expect(failure).toBeUndefined();
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('keeps the session file if a process does not end, so that `stop` finds it', async () => {
+    const session = started();
+    const failure = await abandonStart(
+      session,
+      ({ name }) =>
+        name === 'xvfb' ? Promise.reject(new Error('stuck')) : Promise.resolve('stopped'),
+      dir,
+    );
+    expect(failure).toHaveProperty('message', 'could not end xvfb');
+    expect(readSession(dir)?.processes).toEqual(processes);
   });
 });

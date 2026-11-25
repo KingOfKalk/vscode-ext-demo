@@ -116,11 +116,16 @@ export function removeSession(dir = RUN_DIR): void {
   rmSync(join(dir, TOKENS_NAME), { force: true });
 }
 
-/** Throws, naming the other checkout, if the session is not of this one. */
-export function assertOwnSession({ root }: Session): void {
+/** Whether the session belongs to another checkout, one that is still there to stop it. */
+export function ownedElsewhere({ root }: Session): boolean {
   // Nobody can stop it from a checkout that was removed.
-  if (root !== ROOT && existsSync(root)) {
-    throw new Error(`the live session belongs to ${root}; use it there`);
+  return root !== ROOT && existsSync(root);
+}
+
+/** Throws, naming the other checkout, if the session is not of this one. */
+export function assertOwnSession(session: Session): void {
+  if (ownedElsewhere(session)) {
+    throw new Error(`the live session belongs to ${session.root}; use it there`);
   }
 }
 
@@ -159,6 +164,25 @@ export async function stopProcesses(
   }
   if (left.length > 0) throw new Error(`could not end ${left.join(', ')}`, { cause });
   return graceful;
+}
+
+/**
+ * After a failed `start`: ends what runs. The session file goes only if that worked; otherwise it
+ * stays, so that `stop` still finds the process that survived.
+ * @returns why something did not end; undefined if all did
+ */
+export async function abandonStart(
+  session: Session,
+  stopOne: typeof stopGroup = stopGroup,
+  dir = RUN_DIR,
+): Promise<unknown> {
+  try {
+    await stopProcesses(session.processes, stopOne);
+  } catch (error) {
+    return error;
+  }
+  removeSession(dir);
+  return undefined;
 }
 
 export async function stop(): Promise<void> {

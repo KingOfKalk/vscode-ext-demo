@@ -35,16 +35,17 @@ import {
   type ProcessName,
 } from './processes.ts';
 import {
+  abandonStart,
   createSession,
   ensureRunDir,
   LOG_DIR,
   NOVNC_TOKENS,
+  ownedElsewhere,
   readSession,
   removeSession,
   ROOT,
   saveSession,
   sessionState,
-  stopProcesses,
   VNC_SOCKET,
   VSCODE_LOGS,
   type Session,
@@ -96,13 +97,12 @@ export async function start(keep: boolean): Promise<void> {
     session.state = 'running';
     saveSession(session);
   } catch (error) {
-    const left = await stopProcesses(session.processes).then(
-      () => '',
-      (stopError: unknown) => describeFailure(stopError),
+    const left = await abandonStart(session);
+    if (left === undefined) throw error;
+    throw new Error(
+      `the start failed, and the cleanup ${describeFailure(left)}; what survived stays in the session file: npm run live -- stop`,
+      { cause: error },
     );
-    removeSession();
-    if (left === '') throw error;
-    throw new Error(`the start failed, and the cleanup ${left}`, { cause: error });
   }
 
   console.log(
@@ -120,7 +120,8 @@ function assertNotRunning(): void {
   const session = readSession();
   if (!session) return;
   const state = sessionState(session);
-  if (state !== 'gone' && session.root !== ROOT) {
+  // Not if its checkout is gone: nobody could stop it there, and `stop` works from here.
+  if (state !== 'gone' && ownedElsewhere(session)) {
     throw new Error(`a live session of ${session.root} is already ${state}; stop it there first`);
   }
   switch (state) {
