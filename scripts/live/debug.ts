@@ -212,7 +212,10 @@ function assertUnchanged({ map }: Bundle, file: string): void {
 
 // The commands.
 
-/** Finds the script of the extension, and checks that the extension host runs this build. */
+/**
+ * Finds the script of the extension, and checks that the extension host runs this build. It attaches
+ * before anybody knows whether the host is paused; a pause of another debugger stays as it is.
+ */
 async function loadedScript(inspector: Inspector, url: string, { text }: Bundle): Promise<string> {
   let scriptId: string | undefined;
   const stop = inspector.on('Debugger.scriptParsed', (script) => {
@@ -248,8 +251,12 @@ function interruption(): AbortSignal {
   return abort.signal;
 }
 
-async function withInspector<T>(use: (inspector: Inspector) => Promise<T>): Promise<T> {
-  const inspector = await Inspector.connect(await inspectorUrl(INSPECT_PORT));
+async function withInspector<T>(
+  signal: AbortSignal,
+  use: (inspector: Inspector) => Promise<T>,
+): Promise<T> {
+  const url = await inspectorUrl(INSPECT_PORT, signal);
+  const inspector = await Inspector.connect(url, undefined, signal);
   try {
     return await use(inspector);
   } finally {
@@ -262,7 +269,7 @@ export async function evaluate(expression: string): Promise<string> {
   ownRunningSession();
   const requireFrom = join(installedDir(), BUNDLE);
   const signal = interruption();
-  const { ok, text } = await withInspector((inspector) =>
+  const { ok, text } = await withInspector(signal, (inspector) =>
     evaluateExpression(inspector, expression, {
       timeoutMs: EVAL_TIMEOUT_MS,
       answerMs: EVAL_ANSWER_MS,
@@ -290,7 +297,7 @@ function inTypeScript(text: string): string {
 async function inspectPause(
   inspector: Inspector,
   pause: Pause,
-  { bundle, locate, expressions, signal }: LookOptions,
+  { bundle, locate, expressions, signal, onReport }: LookOptions,
 ): Promise<Report> {
   const [top] = pause.callFrames;
   if (!top) throw new ActionError('the extension host paused without a stack');
@@ -305,7 +312,28 @@ async function inspectPause(
     locals.push({ name, text: value ? await show(value) : '(no value yet)' });
   }
 
+  const stack = describeStack(
+    {
+      frames: pause.callFrames.map(({ functionName, location }) => ({
+        ...at(location),
+        functionName,
+      })),
+      parent: pause.asyncStackTrace && rawStack(pause.asyncStackTrace),
+    },
+    locate,
+  );
   const values: Report['values'] = [];
+  const report: Report = {
+    where: locate({ ...at(top.location), functionName: '' }) ?? 'code that is not of the extension',
+    reason: 'breakpoint',
+    stack,
+    frame: nameOf(top),
+    locals,
+    moreLocals: Math.max(0, variables.length - MAX_LOCALS),
+    values,
+  };
+  onReport(report);
+
   const end = Date.now() + FRAME_EVALS_MS;
   for (const expression of expressions) {
     signal.throwIfAborted();
@@ -321,25 +349,7 @@ async function inspectPause(
     values.push({ name: expression, outcome, text: cutLines(mapped, MAX_LINES) });
   }
 
-  const stack = describeStack(
-    {
-      frames: pause.callFrames.map(({ functionName, location }) => ({
-        ...at(location),
-        functionName,
-      })),
-      parent: pause.asyncStackTrace && rawStack(pause.asyncStackTrace),
-    },
-    locate,
-  );
-  return {
-    where: locate({ ...at(top.location), functionName: '' }) ?? 'code that is not of the extension',
-    reason: 'breakpoint',
-    stack,
-    frame: nameOf(top),
-    locals,
-    moreLocals: Math.max(0, variables.length - MAX_LOCALS),
-    values,
-  };
+  return report;
 }
 
 interface LookOptions {
@@ -347,6 +357,8 @@ interface LookOptions {
   locate: Locate;
   expressions: readonly string[];
   signal: AbortSignal;
+  /** Gets the report before the expressions are evaluated, which are added to it one by one. */
+  onReport: (report: Report) => void;
 }
 
 function at({ scriptId, lineNumber, columnNumber = 0 }: Debugger.Location) {
@@ -394,9 +406,9 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
 
   const signal = interruption();
 
-  await withInspector(async (inspector) => {
+  await withInspector(signal, async (inspector) => {
     const url = pathToFileURL(bundle.file).href;
-    const scriptId = await loadedScript(inspector, url, bundle);
+    const scriptId = await unlessAborted(signal, loadedScript(inspector, url, bundle));
     const locate: Locate = (frame) => {
       if (frame.scriptId !== scriptId) return undefined;
       const { lineNumber, columnNumber } = frame;
@@ -405,7 +417,16 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
         ? formatPosition(source)
         : formatGenerated({ line: lineNumber, column: columnNumber });
     };
-    const look = { bundle, locate, expressions, signal };
+    let report: Report | undefined;
+    const look: LookOptions = {
+      bundle,
+      locate,
+      expressions,
+      signal,
+      onReport: (seen) => {
+        report = seen;
+      },
+    };
     const { seen, trigger: triggered } = await pauseAt(
       inspector,
       {
@@ -429,6 +450,8 @@ export async function breakAt(command: Extract<LiveCommand, { name: 'break' }>):
       },
       (pause) => inspectPause(inspector, pause, look),
     ).catch((error: unknown) => {
+      // What was seen is worth something, also if the extension host did not continue.
+      if (report) console.log(formatReport(report));
       if (error instanceof OtherPauseError) {
         const [top] = error.pause.callFrames;
         const where = top && locate({ ...at(top.location), functionName: '' });

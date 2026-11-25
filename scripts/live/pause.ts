@@ -199,18 +199,23 @@ export async function pauseAt<T>(
    * breakpoint: it came after this debugger, perhaps because of it.
    */
   const release = async (): Promise<void> => {
+    // Refused if nothing is paused, or if the debugger is not enabled yet.
+    const unlessRefused = (error: unknown) => {
+      if (!(error instanceof InspectorError)) throw error;
+    };
     const answers: Promise<unknown>[] = [];
+    const inactive = { active: false };
+    if (checked) {
+      // For a breakpoint whose ID is still on its way.
+      answers.push(
+        inspector.send('Debugger.setBreakpointsActive', inactive, cleanupMs).catch(unlessRefused),
+      );
+    }
     if (breakpointId !== undefined) {
       answers.push(inspector.send('Debugger.removeBreakpoint', { breakpointId }, cleanupMs));
     }
     if (checked) {
-      const resuming = inspector.send('Debugger.resume', undefined, cleanupMs);
-      answers.push(
-        resuming.catch((error: unknown) => {
-          // "Can only perform operation while paused."
-          if (!(error instanceof InspectorError)) throw error;
-        }),
-      );
+      answers.push(inspector.send('Debugger.resume', undefined, cleanupMs).catch(unlessRefused));
     }
     answers.push(inspector.send('Debugger.disable', undefined, cleanupMs));
     // Answered by the event loop, so it runs again.
@@ -247,14 +252,17 @@ export async function pauseAt<T>(
 
 /** Waits until the process ran its event loop, which it does not if it is paused or busy. */
 export async function turnEventLoop(inspector: Inspector, timeoutMs: number): Promise<void> {
-  await inspector.send(
+  const end = Date.now() + timeoutMs;
+  const { result } = await inspector.send(
     'Runtime.evaluate',
     {
       expression: 'new Promise((resolve) => setTimeout(resolve, 0))',
-      awaitPromise: true,
       disableBreaks: true,
       silent: true,
     },
     timeoutMs,
   );
+  // Not `awaitPromise` of the first command: V8 may lose that promise, but not one that it handed out.
+  const promiseObjectId = result.objectId ?? '';
+  await inspector.send('Runtime.awaitPromise', { promiseObjectId }, Math.max(1, end - Date.now()));
 }

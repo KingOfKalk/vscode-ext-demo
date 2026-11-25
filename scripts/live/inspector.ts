@@ -18,6 +18,8 @@ export interface Commands {
   'Debugger.enable': [undefined, unknown];
   'Debugger.disable': [undefined, unknown];
   'Debugger.setSkipAllPauses': [Debugger.SetSkipAllPausesParameterType, unknown];
+  'Runtime.awaitPromise': [Runtime.AwaitPromiseParameterType, Runtime.AwaitPromiseReturnType];
+  'Debugger.setBreakpointsActive': [Debugger.SetBreakpointsActiveParameterType, unknown];
   'Runtime.terminateExecution': [undefined, unknown];
   'Debugger.pause': [undefined, unknown];
   'Debugger.resume': [undefined, unknown];
@@ -83,16 +85,17 @@ interface Message {
 }
 
 /** The address of the only process that this port is of. */
-export async function inspectorUrl(port: number): Promise<string> {
+export async function inspectorUrl(port: number, signal: AbortSignal): Promise<string> {
   try {
     const response = await fetch(`http://127.0.0.1:${port}/json/list`, {
-      signal: AbortSignal.timeout(CONNECT_TIMEOUT_MS),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(CONNECT_TIMEOUT_MS)]),
     });
     const [target] = (await response.json()) as { webSocketDebuggerUrl?: string }[];
     if (target?.webSocketDebuggerUrl) return target.webSocketDebuggerUrl;
   } catch {
     // Nothing listens, or something that is no inspector.
   }
+  signal.throwIfAborted();
   throw new ActionError(
     `the extension host has no debugger at 127.0.0.1:${port}; it may be starting again, or it crashed (see: npm run live -- logs); if it stays so: npm run live -- reload`,
   );
@@ -118,34 +121,51 @@ export class Inspector {
     });
   }
 
-  static async connect(url: string, timeoutMs = CONNECT_TIMEOUT_MS): Promise<Inspector> {
+  /** The connection is closed on every failure. */
+  static async connect(
+    url: string,
+    timeoutMs = CONNECT_TIMEOUT_MS,
+    signal?: AbortSignal,
+  ): Promise<Inspector> {
+    signal?.throwIfAborted();
     const socket = new WebSocket(url);
     const inspector = new Inspector(socket);
-    await new Promise<void>((resolve, reject) => {
+    // A process that ends waits for its debuggers to leave.
+    inspector.#events.once('NodeRuntime.waitingForDisconnect', () => {
+      inspector.close();
+    });
+    let stop = () => {};
+    const opened = new Promise<void>((resolve, reject) => {
       const fail = () => {
-        clearTimeout(timer);
         reject(new ActionError('cannot connect to the debugger of the extension host'));
-        socket.close();
+      };
+      const interrupt = () => {
+        reject(signal?.reason as Error);
       };
       const timer = setTimeout(fail, timeoutMs);
       socket.addEventListener('error', fail);
       socket.addEventListener('open', () => {
         clearTimeout(timer);
-        resolve();
+        const method = 'NodeRuntime.notifyWhenWaitingForDisconnect';
+        inspector.send(method, { enabled: true }, timeoutMs).then(() => {
+          resolve();
+        }, reject);
       });
-    });
-    // A process that ends waits for its debuggers to leave.
-    inspector.#events.once('NodeRuntime.waitingForDisconnect', () => {
-      inspector.close();
+      signal?.addEventListener('abort', interrupt);
+      stop = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', interrupt);
+      };
     });
     try {
-      const method = 'NodeRuntime.notifyWhenWaitingForDisconnect';
-      await inspector.send(method, { enabled: true }, timeoutMs);
+      await opened;
+      return inspector;
     } catch (error) {
       inspector.close();
       throw error;
+    } finally {
+      stop();
     }
-    return inspector;
   }
 
   /** Aborted when the connection ends, from either side. */
