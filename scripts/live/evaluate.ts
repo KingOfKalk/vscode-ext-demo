@@ -34,14 +34,15 @@ export interface EvaluateOptions {
 
 /**
  * An async function around it: so `await` works, and `{ a: 1 }` is an object and no block. A rejection
- * counts as handled, because the inspector asks for the result only after the process went on.
+ * counts as handled, because the inspector asks for the result only after the process went on. The
+ * promise has no name in the scope of the expression, so that it cannot hide one of the user's.
  */
 function wrap(expression: string, requireFrom: string | undefined): string {
   const from = JSON.stringify(requireFrom ?? '/');
   const vscode = requireFrom === undefined ? '' : `const vscode = require('vscode');`;
-  return `(() => { const result = (async () => { const require = process.getBuiltinModule('node:module').createRequire(${from}); ${vscode} return (
+  return `((handled) => { handled.catch(() => undefined); return handled; })((async () => { const require = process.getBuiltinModule('node:module').createRequire(${from}); ${vscode} return (
 ${expression}
-); })(); result.catch(() => undefined); return result; })()`;
+); })())`;
 }
 
 // The timeout of the inspector is only for the JavaScript before the first `await`. What runs after it
@@ -124,6 +125,8 @@ const ENDINGS: Record<Exclude<Ending, 'idle'>, string> = {
  * Never pauses, also not at `debugger`. Waits for the result if it is a promise. What blocks the
  * process when the result does not come in time, or after an interrupt, is ended; only native code is not.
  * A process that is busy already gets nothing to evaluate, so what is ended began after that.
+ * A loop that only starts after the answer (in a timer, or in a promise that the expression leaves
+ * behind) is not ended: nothing watches the process any more.
  */
 export async function evaluateExpression(
   inspector: Inspector,
@@ -166,7 +169,9 @@ export async function evaluateExpression(
 
   signal?.throwIfAborted();
   if (!(await unlessInterrupted(eventLoopTurns(inspector, timeoutMs)))) {
-    throw new ActionError('the extension host is busy or paused; nothing was evaluated');
+    throw new ActionError(
+      'the extension host is busy or paused; nothing was evaluated. If the window stays frozen: npm run live -- stop, then start --keep',
+    );
   }
   try {
     return await unlessInterrupted(evaluate());

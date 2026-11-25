@@ -141,6 +141,30 @@ describe('evaluateExpression', () => {
     });
   });
 
+  it('does not shadow the name `result` of the expression', async () => {
+    const { child, url } = await startChild();
+    const inspector = await connect(url);
+    await evaluateExpression(inspector, 'globalThis.result = 5', OPTIONS);
+    expect(await evaluateExpression(inspector, 'result', OPTIONS)).toEqual({
+      ok: true,
+      text: '5',
+    });
+    expect(await increment(child)).toBe(2);
+  });
+
+  it('names the way out when the extension host is busy', async () => {
+    const { url } = await startChild();
+    const inspector = await connect(url);
+    await inspector.send('Runtime.evaluate', {
+      expression:
+        'setTimeout(() => { const end = Date.now() + 800; while (Date.now() < end) globalThis.x = {}; }, 0)',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await expect(evaluateExpression(inspector, '1', OPTIONS)).rejects.toThrow(
+      'nothing was evaluated. If the window stays frozen: npm run live -- stop, then start --keep',
+    );
+  });
+
   it('evaluates nothing in a process that another debugger paused', async () => {
     const { child, url } = await startChild();
     const other = await connect(url);
