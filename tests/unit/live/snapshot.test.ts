@@ -46,6 +46,28 @@ const QUICK = `- textbox "Type the name of a command to run.": ">Demo: Open Win"
   - 'option "Demo: Focus on Demo View, similar commands"':
     - text: "Demo: Focus on Demo View similar commands"`;
 
+const PANEL = `- tablist "Active View Switcher":
+  - tab "Problems (Ctrl+Shift+M)": Problems
+  - tab "Output (Ctrl+K Ctrl+H)" [expanded] [selected]: Output
+  - 'tab "Terminal (Ctrl+\`)"': Terminal
+- toolbar "Output actions":
+  - combobox "Switch Output":
+    - option "Demo" [selected]
+    - option "Git"
+  - button "Clear Output": 
+- toolbar:
+  - button "Hide Panel (Ctrl+J)": `;
+const TERMINAL_PANEL = `- tablist "Active View Switcher":
+  - tab "Output (Ctrl+K Ctrl+H)": Output
+  - 'tab "Terminal (Ctrl+\`)" [selected]': Terminal`;
+const DIALOG = `- dialog "Warning Really do it?":
+  - button "No"
+  - button "Cancel"
+  - button "Yes"
+  - text:  Really do it? Some detail
+  - toolbar:
+    - button "Close Dialog": `;
+
 type Part = Exclude<keyof UiSnapshot, 'modalEditor'>;
 
 function ui(over: Partial<Record<Part, string | undefined>> = {}, modal?: string): UiSnapshot {
@@ -61,11 +83,13 @@ function ui(over: Partial<Record<Part, string | undefined>> = {}, modal?: string
     activityBar: read('activityBar', ACTIVITY) ?? [],
     sidebar: read('sidebar', SIDEBAR) ?? [],
     editorTabs: read('editorTabs', EDITOR) ?? [],
+    panel: read('panel', undefined),
     window: read('window', WINDOW),
     statusBar: read('statusBar', STATUS) ?? [],
     notifications: read('notifications', '') ?? [],
     modalEditor: modal,
     quickInput: read('quickInput', undefined),
+    dialog: read('dialog', undefined),
   };
 }
 
@@ -108,6 +132,23 @@ describe('formatSnapshot', () => {
     expect(formatSnapshot(ui())).not.toContain('Modal editor');
     expect(formatSnapshot(ui({}, 'Settings'))).toContain(
       'Modal editor: Settings (key Escape closes it)',
+    );
+  });
+
+  it('shows the selected tab of the panel and its output channel, only if it is open', () => {
+    expect(formatSnapshot(ui())).not.toContain('Panel');
+    expect(formatSnapshot(ui({ panel: PANEL }))).toContain(
+      'Panel: Output (Ctrl+K Ctrl+H) | channel: Demo\nStatus bar',
+    );
+    expect(formatSnapshot(ui({ panel: TERMINAL_PANEL }))).toContain(
+      'Panel: Terminal (Ctrl+`)\nStatus bar',
+    );
+  });
+
+  it('shows a dialog with its message and buttons, only if it is open', () => {
+    expect(formatSnapshot(ui())).not.toContain('Dialog');
+    expect(formatSnapshot(ui({ dialog: DIALOG }))).toContain(
+      'Dialog: Warning Really do it? | buttons: No | Cancel | Yes (key Escape cancels it)',
     );
   });
 

@@ -10,6 +10,8 @@ export interface UiSnapshot {
   activityBar: AriaNode[];
   sidebar: AriaNode[];
   editorTabs: AriaNode[];
+  /** Undefined if the panel (Output, Terminal, …) is closed. */
+  panel: AriaNode[] | undefined;
   /** Undefined if there is no Demo window or its tab is hidden. */
   window: AriaNode[] | undefined;
   /** The Demo window is shown, but blank: it never shows a count. */
@@ -20,6 +22,8 @@ export interface UiSnapshot {
   modalEditor: string | undefined;
   /** Undefined if the quick input (command palette, picker) is closed. */
   quickInput: AriaNode[] | undefined;
+  /** Undefined if no modal dialog is open. */
+  dialog: AriaNode[] | undefined;
 }
 
 /** Roles that only group; they have no line of their own. */
@@ -96,6 +100,26 @@ function notificationLines(nodes: readonly AriaNode[]): string[] {
   return rows.length > 0 ? ['Notifications:', ...indented(rows)] : [];
 }
 
+/** `Panel: <selected tab>`, and for the Output tab the selected channel; nothing if it is closed. */
+function panelLines(nodes: readonly AriaNode[] | undefined): string[] {
+  if (!nodes) return [];
+  const tab = nodes.find(({ role, states }) => role === 'tab' && states.includes('selected'));
+  const channel = nodes.find(
+    ({ role, states }) => role === 'option' && states.includes('selected'),
+  );
+  return [`Panel: ${tab?.name ?? 'unknown'}${channel ? ` | channel: ${channel.name}` : ''}`];
+}
+
+/** A modal dialog: its name starts with the severity, its buttons are the direct children. */
+function dialogLines(nodes: readonly AriaNode[] | undefined): string[] {
+  const dialog = nodes?.find(({ role }) => role === 'dialog');
+  if (!nodes || !dialog) return [];
+  const buttons = nodes
+    .filter(({ role, depth }) => role === 'button' && depth === dialog.depth + 1)
+    .map(({ name }) => name);
+  return [`Dialog: ${dialog.name} | buttons: ${buttons.join(' | ')} (key Escape cancels it)`];
+}
+
 function quickInputLines(nodes: readonly AriaNode[] | undefined): string[] {
   if (!nodes) return [];
   const input = nodes.find(({ role }) => role === 'textbox');
@@ -115,10 +139,12 @@ export function formatSnapshot(ui: UiSnapshot): string {
     ...sidebarLines(ui.sidebar),
     line('Editor tabs', ui.editorTabs.filter(({ role }) => role === 'tab').map(label)),
     ...windowLines(ui.window, ui.windowBlank),
+    ...panelLines(ui.panel),
     line('Status bar', ui.statusBar.filter(({ role }) => !GROUPS.has(role)).map(label)),
     ...(ui.modalEditor === undefined
       ? []
       : [`Modal editor: ${ui.modalEditor} (key Escape closes it)`]),
+    ...dialogLines(ui.dialog),
     ...notificationLines(ui.notifications),
     ...quickInputLines(ui.quickInput),
   ].join('\n');
@@ -190,6 +216,8 @@ export async function collectSnapshot(connection: Connection): Promise<UiSnapsho
     center,
     quickInput,
     modalEditor,
+    panel,
+    dialog,
     win,
   ] = await Promise.all([
     part('activitybar'),
@@ -200,18 +228,22 @@ export async function collectSnapshot(connection: Connection): Promise<UiSnapsho
     readPart(page, '.notifications-center', 'the notification centre', true),
     readPart(page, '.quick-input-widget', 'the quick input', true),
     readModalEditor(page),
+    readPart(page, '[id="workbench.parts.panel"]', 'the panel', true),
+    readPart(page, '.monaco-dialog-box', 'the dialog', true),
     frame ? readPart(frame, 'body', 'the Demo window', true) : undefined,
   ]);
   return {
     activityBar,
     sidebar,
     editorTabs,
+    panel,
     window: win,
     windowBlank: blank,
     statusBar,
     notifications: [...(toasts ?? []), ...(center ?? [])],
     modalEditor,
     quickInput,
+    dialog,
   };
 }
 
