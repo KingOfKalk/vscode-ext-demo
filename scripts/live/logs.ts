@@ -3,7 +3,11 @@
 import { globSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 
-const ACTIVATED = 'Extension activated';
+/** The line the extension logs when it activates; anchored, so a message that says so does not count. */
+const LOG_LINE = String.raw`^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \[info\] `;
+const ACTIVATED = new RegExp(`${LOG_LINE}Extension activated, count \\d+`, 'm');
+/** The line of a change of the settings, with what the extension now has as JSON. */
+const SETTINGS_CHANGED = new RegExp(`${LOG_LINE}Settings changed: (.*)$`, 'm');
 
 export interface RunLogs {
   /** The `Demo` output channel. Missing until the extension makes it. */
@@ -48,7 +52,7 @@ export function runLogs(
 /** Whether the extension has activated in the new run. */
 export function isActivated(logs: string, before: readonly string[], extensionId: string): boolean {
   const found = runLogs(logs, before, extensionId);
-  return found !== undefined && readText(found.demo).includes(ACTIVATED);
+  return found !== undefined && ACTIVATED.test(readText(found.demo));
 }
 
 /** The text of a file, or '' if it does not exist. */
@@ -120,7 +124,7 @@ export function readActivations(logs: string, extensionId: string): Activations 
   const found = runLogs(logs, [], extensionId);
   if (!found) return { run: undefined, count: 0 };
   const run = relative(logs, found.host).split(sep)[0];
-  const lines = (readLog(found.demo) ?? '').split('\n').filter((line) => line.includes(ACTIVATED));
+  const lines = (readLog(found.demo) ?? '').split('\n').filter((line) => ACTIVATED.test(line));
   const last = lines.at(-1);
   return last === undefined ? { run, count: 0 } : { run, count: lines.length, last };
 }
@@ -132,4 +136,48 @@ export function readActivations(logs: string, extensionId: string): Activations 
 export function isNewActivation(before: Activations, now: Activations): boolean {
   if (now.count === 0) return false;
   return now.run !== before.run || now.count !== before.count;
+}
+
+/**
+ * What the extension has after a settings change, from the last of those lines of the Demo log
+ * (`line` is such a line), or undefined if it is not one.
+ */
+export function parseSettingsLine(line: string): Record<string, unknown> | undefined {
+  const json = SETTINGS_CHANGED.exec(line)?.[1];
+  if (json === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The lines of a Demo log that say the settings changed. */
+export function settingsLines(demoLog: string): string[] {
+  return demoLog.split('\n').filter((line) => SETTINGS_CHANGED.test(line));
+}
+
+/** A line of a log starts with its time; the lines of a stack do not. */
+const TIMED = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} /;
+const ERROR_LINE = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3} \[error\] /;
+
+/**
+ * The last error of a log: its `[error]` lines and the lines of the stack under them (the first
+ * `maxLines`), or undefined if there is none. An error is often several `[error]` lines in a row.
+ */
+export function lastErrorBlock(text: string, maxLines: number): string | undefined {
+  const lines = linesOf(text);
+  const last = lines.findLastIndex((line) => ERROR_LINE.test(line));
+  if (last < 0) return undefined;
+  let start = last;
+  while (start > 0 && ERROR_LINE.test(lines[start - 1] ?? '')) start--;
+  let end = last + 1;
+  while (end < lines.length && !TIMED.test(lines[end] ?? '')) end++;
+  const block = lines.slice(start, end);
+  const shown = block.slice(0, maxLines);
+  if (block.length > shown.length) shown.push(`... ${block.length - shown.length} more lines`);
+  return shown.join('\n');
 }

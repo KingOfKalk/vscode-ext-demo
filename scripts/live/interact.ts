@@ -289,6 +289,13 @@ async function runFocused(page: Page, title: string): Promise<void> {
   }
 }
 
+/** Throws if an editor lies over the window (Settings opens like this): the palette does not open then. */
+export async function assertNoOverlay(page: Page): Promise<void> {
+  if (await page.locator(MODAL_EDITOR).first().isVisible()) {
+    throw new ActionError('an editor lies over the window; close it first: key Escape');
+  }
+}
+
 /**
  * Runs a command of the command palette by its exact title, like `Demo: Open Window`.
  * Opens the palette with F1, types the title, and runs the row only if its label is the title.
@@ -299,10 +306,7 @@ export async function runCommand(connection: Connection, title: string): Promise
   const { page } = connection;
   await closePalette(page);
   try {
-    // The palette does not open over it.
-    if (await page.locator(MODAL_EDITOR).first().isVisible()) {
-      throw new ActionError('an editor lies over the window; close it first: key Escape');
-    }
+    await assertNoOverlay(page);
     await page.keyboard.press('F1');
     await page.locator(QUICK_INPUT).waitFor({ state: 'visible', timeout: ACTION_TIMEOUT_MS });
     await page.keyboard.insertText(title);

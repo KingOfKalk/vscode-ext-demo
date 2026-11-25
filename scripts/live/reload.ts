@@ -2,19 +2,26 @@
 // The profile stays, so does the count; the extension host starts again with the new code.
 import { createHash } from 'node:crypto';
 import { globSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { sessionEnv } from './environment.ts';
-import { ActionError, guard } from './errors.ts';
-import { runCommand } from './interact.ts';
-import { isNewActivation, readActivations, tail } from './logs.ts';
+import { ActionError, guard, userError } from './errors.ts';
+import { assertNoOverlay, runCommand } from './interact.ts';
+import {
+  isNewActivation,
+  lastErrorBlock,
+  readActivations,
+  readLog,
+  runLogs,
+  tail,
+} from './logs.ts';
 import { waitFor } from './processes.ts';
-import { ROOT, VSCODE_LOGS } from './session.ts';
+import { PROFILE, ROOT, VSCODE_LOGS } from './session.ts';
 import {
   attach,
   connect,
   downloadVscode,
   extensionId,
-  install,
+  installUnchecked,
   installedDir,
   ownRunningSession,
   packageVsix,
@@ -86,66 +93,125 @@ function versionIn(dir: string): string {
   return manifest.version;
 }
 
+/** The text of a failure after the new files were installed: the window may still run the old ones. */
+function notRunning(error: unknown): ActionError {
+  const text = userError(error).message;
+  return new ActionError(`the new files are installed but not running: ${text}`);
+}
+
+/**
+ * The failure of a reload that the extension did not follow with an activation. The reason is in
+ * the log of the extension host (an exception of `activate()` is there, not in the Demo log, which
+ * the extension has not written yet), so both logs are named and their ends printed.
+ */
+export function describeNoActivation(
+  seconds: number,
+  demo: { where: string; end: string },
+  host: { where: string; end: string; error?: string },
+): string {
+  const indent = (text: string) => text.split('\n').map((line) => `  ${line}`);
+  return [
+    `the extension did not activate again within ${seconds} s`,
+    ...(host.error === undefined
+      ? []
+      : [`the last error in the extension host log (${host.where}):`, ...indent(host.error)]),
+    `the end of the extension host log (${host.where}):`,
+    ...indent(host.end),
+    `the end of the Demo log (${demo.where}):`,
+    ...indent(demo.end),
+  ].join('\n');
+}
+
 /** Builds, reinstalls over the same version, reloads the window and waits for the new activation. */
 export async function reload(): Promise<string> {
   ownRunningSession();
   const id = extensionId();
-  const files = extensionFiles();
-  const vsix = packageVsix();
-  const oldDir = installedDir();
-  const before = new Map(files.map((file) => [file, hashFile(join(oldDir, file))]));
-  const oldVersion = versionIn(oldDir);
-
-  install(await downloadVscode(), vsix, sessionEnv());
-  const dir = installedDir();
-  const states = files.map((file) => ({
-    file,
-    before: before.get(file),
-    built: hashOf(readFileSync(join(ROOT, file))),
-    after: hashFile(join(dir, file)) ?? 'missing',
-  }));
-  const { changed, same } = describeReinstall(states);
-  const version = versionIn(dir);
-  if (version !== versionIn(ROOT)) {
-    throw new ActionError(`the installed version is ${version}, not the built ${versionIn(ROOT)}`);
-  }
-
-  const was = readActivations(VSCODE_LOGS, id);
-  await guard('cannot reload the window', async () => {
-    const open = await connect();
+  // The window first: a build and an install are no use if the window cannot take the command.
+  const open = await guard('cannot reach the window', async () => {
+    const connection = await connect();
     try {
-      await runCommand(open, RELOAD_COMMAND);
-    } finally {
-      await open.close().catch(() => undefined);
+      await assertNoOverlay(connection.page);
+    } catch (error) {
+      await connection.close().catch(() => undefined);
+      throw error;
     }
+    return connection;
   });
-  const now = await waitFor(
-    () => {
-      const logs = readActivations(VSCODE_LOGS, id);
-      return `the extension activates again; the end of the Demo log:\n${tail(join(VSCODE_LOGS, logs.run ?? '', 'window1/exthost', id, 'Demo.log'))}`;
-    },
-    () => {
-      const logs = readActivations(VSCODE_LOGS, id);
-      return isNewActivation(was, logs) ? logs : undefined;
-    },
-    { timeoutMs: ACTIVATION_TIMEOUT_MS },
-  ).catch((error: unknown) => {
-    // Whole: its text has the end of the log.
-    throw new ActionError(error instanceof Error ? error.message : String(error));
-  });
-  const ready = await guard('the window did not come back after the reload', () => attach(30_000));
-  await ready.close().catch(() => undefined);
+  try {
+    const files = extensionFiles();
+    const vsix = packageVsix();
+    const oldDir = installedDir();
+    const before = new Map(files.map((file) => [file, hashFile(join(oldDir, file))]));
+    const oldVersion = versionIn(oldDir);
 
-  return [
-    `Reloaded ${id}, ` +
-      (version === oldVersion
-        ? `version ${version} as before`
-        : `version ${oldVersion} -> ${version}`) +
-      '.',
-    changed.length > 0
-      ? `Replaced: ${changed.join(', ')}`
-      : 'No file changed: the build is identical to what was installed.',
-    ...(same.length > 0 && changed.length > 0 ? [`Same: ${same.join(', ')}`] : []),
-    `Activated again: ${now.last ?? ''}`,
-  ].join('\n');
+    installUnchecked(await downloadVscode(), vsix, sessionEnv());
+    const dir = installedDir();
+    // The one check that the install did what it should: every file is the built one.
+    const { changed, same } = describeReinstall(
+      files.map((file) => ({
+        file,
+        before: before.get(file),
+        built: hashOf(readFileSync(join(ROOT, file))),
+        after: hashFile(join(dir, file)) ?? 'missing',
+      })),
+    );
+    const version = versionIn(dir);
+    if (version !== versionIn(ROOT)) {
+      throw new ActionError(
+        `the installed version is ${version}, not the built ${versionIn(ROOT)}`,
+      );
+    }
+
+    try {
+      const was = readActivations(VSCODE_LOGS, id);
+      // The host log of a run keeps the hosts before the reload: only what is new can be the reason.
+      const hostBefore = runLogs(VSCODE_LOGS, [], id)?.host;
+      const hostLinesBefore = hostBefore ? (readLog(hostBefore) ?? '').split('\n').length : 0;
+      await guard('cannot reload the window', () => runCommand(open, RELOAD_COMMAND));
+      const now = await waitFor(
+        () => 'the extension activates again',
+        () => {
+          const logs = readActivations(VSCODE_LOGS, id);
+          return isNewActivation(was, logs) ? logs : undefined;
+        },
+        { timeoutMs: ACTIVATION_TIMEOUT_MS },
+      ).catch(() => {
+        const found = runLogs(VSCODE_LOGS, [], id);
+        const shown = (file: string | undefined, end: number) => ({
+          where: file === undefined ? '(no log yet)' : relative(PROFILE, file),
+          end: file === undefined ? '(missing)' : tail(file, end),
+        });
+        const host = found?.host;
+        const hostText = host === undefined ? '' : (readLog(host) ?? '');
+        const fresh =
+          host === hostBefore ? hostText.split('\n').slice(hostLinesBefore).join('\n') : hostText;
+        const error = lastErrorBlock(fresh, 8);
+        throw new ActionError(
+          describeNoActivation(ACTIVATION_TIMEOUT_MS / 1000, shown(found?.demo, 3), {
+            ...shown(host, 5),
+            ...(error === undefined ? {} : { error }),
+          }),
+        );
+      });
+      const ready = await guard('the window did not come back', () => attach(30_000));
+      await ready.close().catch(() => undefined);
+
+      return [
+        `Reloaded ${id}, ` +
+          (version === oldVersion
+            ? `version ${version} as before`
+            : `version ${oldVersion} -> ${version}`) +
+          '.',
+        changed.length > 0
+          ? `Replaced: ${changed.join(', ')}`
+          : 'No file changed: the build is identical to what was installed.',
+        ...(same.length > 0 && changed.length > 0 ? [`Same: ${same.join(', ')}`] : []),
+        `Activated again: ${now.last ?? ''}`,
+      ].join('\n');
+    } catch (error) {
+      throw notRunning(error);
+    }
+  } finally {
+    await open.close().catch(() => undefined);
+  }
 }

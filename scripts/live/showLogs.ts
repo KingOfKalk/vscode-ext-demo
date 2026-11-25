@@ -15,11 +15,11 @@ async function consoleSection(running: boolean): Promise<string> {
   try {
     const open = await connect();
     try {
-      const webview = await open.webview();
-      if (!webview) {
+      const entries = await readConsoleErrors(open.page, extensionId());
+      if (!entries) {
         return `${CONSOLE_TITLE}: not available (no Demo window is shown; a hidden one has no console)`;
       }
-      return formatConsoleEntries(await readConsoleErrors(webview));
+      return formatConsoleEntries(entries);
     } finally {
       await open.close().catch(() => undefined);
     }

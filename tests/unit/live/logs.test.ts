@@ -6,11 +6,14 @@ import {
   formatSection,
   isActivated,
   isNewActivation,
+  lastErrorBlock,
   lastLines,
   listRuns,
+  parseSettingsLine,
   readActivations,
   runLogs,
   selectRun,
+  settingsLines,
 } from '../../../scripts/live/logs.ts';
 
 const ID = 'kingofkalk.vscode-ext-demo';
@@ -193,5 +196,90 @@ describe('activations', () => {
 
   it('takes the first activation after a start without one', () => {
     expect(isNewActivation({ run: undefined, count: 0 }, { run: '1', count: 1 })).toBe(true);
+  });
+});
+
+describe('the log lines that count', () => {
+  it('counts only the line of the extension, not a message that has the words', () => {
+    const logs = mkdtempSync(join(tmpdir(), 'logs-'));
+    try {
+      const file = join(logs, `1/window1/exthost/${ID}/Demo.log`);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(
+        file,
+        '2026-11-25 07:00:00.000 [info] Webview message: Extension activated, count 7\n' +
+          '2026-11-25 07:00:01.000 [error] Problem: [info] Extension activated, count 8\n',
+      );
+      expect(readActivations(logs, ID)).toEqual({ run: '1', count: 0 });
+      expect(isActivated(logs, [], ID)).toBe(false);
+      writeFileSync(file, `${ACTIVATED}`);
+      expect(readActivations(logs, ID).count).toBe(1);
+    } finally {
+      rmSync(logs, { recursive: true });
+    }
+  });
+
+  it('reads the settings from the line of a change, and only from that', () => {
+    const line = '2026-11-25 07:40:52.283 [info] Settings changed: {"message":"Hi","step":5}';
+    expect(parseSettingsLine(line)).toEqual({ message: 'Hi', step: 5 });
+    expect(
+      parseSettingsLine(
+        '2026-11-25 07:40:52.283 [info] Webview message: Settings changed: {"a":1}',
+      ),
+    ).toBeUndefined();
+    expect(
+      parseSettingsLine('2026-11-25 07:40:52.283 [info] Settings changed: not json'),
+    ).toBeUndefined();
+    expect(
+      parseSettingsLine('2026-11-25 07:40:52.283 [info] Settings changed: [1]'),
+    ).toBeUndefined();
+  });
+
+  it('finds the lines of the changes', () => {
+    const text = [
+      '2026-11-25 07:40:51.000 [info] Extension activated, count 0',
+      '2026-11-25 07:40:52.000 [info] Settings changed: {"step":1}',
+      '2026-11-25 07:40:53.000 [info] Webview message: Settings changed: {"step":2}',
+      '2026-11-25 07:40:54.000 [info] Settings changed: {"step":3}',
+    ].join('\n');
+    expect(settingsLines(text)).toEqual([
+      '2026-11-25 07:40:52.000 [info] Settings changed: {"step":1}',
+      '2026-11-25 07:40:54.000 [info] Settings changed: {"step":3}',
+    ]);
+  });
+});
+
+describe('lastErrorBlock', () => {
+  const T = '2026-11-25 08:04:59.477';
+  const log = [
+    `${T} [info] one`,
+    `${T} [error] Activating extension x failed due to an error:`,
+    `${T} [error] Error: test hook`,
+    '\tat activate (a.js:1:1)',
+    '\tat b (b.js:2:2)',
+    `${T} [info] after`,
+  ].join('\n');
+
+  it('takes the error lines in a row and the stack under them, not what comes after', () => {
+    expect(lastErrorBlock(log, 10)?.split('\n')).toEqual([
+      `${T} [error] Activating extension x failed due to an error:`,
+      `${T} [error] Error: test hook`,
+      '\tat activate (a.js:1:1)',
+      '\tat b (b.js:2:2)',
+    ]);
+  });
+
+  it('cuts a long stack', () => {
+    expect(lastErrorBlock(log, 3)?.split('\n').at(-1)).toBe('... 1 more lines');
+  });
+
+  it('takes the last of several errors', () => {
+    const text = `${T} [error] first\n${T} [info] x\n${T} [error] second`;
+    expect(lastErrorBlock(text, 5)).toBe(`${T} [error] second`);
+  });
+
+  it('is undefined without an error; a word in a message is no error line', () => {
+    expect(lastErrorBlock(`${T} [info] [error] not one`, 5)).toBeUndefined();
+    expect(lastErrorBlock('', 5)).toBeUndefined();
   });
 });

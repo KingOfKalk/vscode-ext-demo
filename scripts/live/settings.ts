@@ -69,3 +69,46 @@ export function describeChange(key: string, old: Found, value: unknown): string 
   const before = JSON.stringify(old.value);
   return before === now ? `${key}: ${now} (unchanged)` : `${key}: ${before} -> ${now}`;
 }
+
+export interface Applied {
+  /** False if the extension does not have the setting at all. */
+  ok: boolean;
+  text: string;
+}
+
+/**
+ * What the extension reports after `key` was written: its settings as it logged them. The log shows
+ * the value the extension uses, which is not always the one written (it limits a step that is too
+ * big), so both are compared and said.
+ * @param prefix the section of the extension, like `vscodeExtDemo.`
+ * @param seen the settings of the log line, undefined if the line could not be read
+ */
+export function describeApplied(
+  key: string,
+  prefix: string,
+  written: unknown,
+  seen: Record<string, unknown> | undefined,
+): Applied {
+  if (seen === undefined) {
+    return {
+      ok: true,
+      text: 'the extension saw a settings change, but its log line is not readable',
+    };
+  }
+  const name = key.slice(prefix.length);
+  if (!Object.hasOwn(seen, name)) {
+    return {
+      ok: false,
+      text: `the extension saw a settings change, but it has no setting "${name}" (it has: ${Object.keys(seen).join(', ')})`,
+    };
+  }
+  const now = JSON.stringify(seen[name]);
+  const sent = JSON.stringify(written);
+  return {
+    ok: true,
+    text:
+      now === sent
+        ? `the extension now has ${name} = ${now}`
+        : `the extension now has ${name} = ${now}, not ${sent}: it uses its own limit or default`,
+  };
+}

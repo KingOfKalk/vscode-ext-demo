@@ -2,8 +2,8 @@
 // one line per thing, the names are those that `click` takes.
 import type { Frame, Page } from 'playwright-core';
 import { parseAriaSnapshot, type AriaNode } from './aria.ts';
-import { guard } from './errors.ts';
-import type { Connection } from './vscode.ts';
+import { guard, userError } from './errors.ts';
+import { BlankWindowError, type Connection } from './vscode.ts';
 
 /** What `collectSnapshot` reads; each part is empty if it is not visible. */
 export interface UiSnapshot {
@@ -12,6 +12,8 @@ export interface UiSnapshot {
   editorTabs: AriaNode[];
   /** Undefined if there is no Demo window or its tab is hidden. */
   window: AriaNode[] | undefined;
+  /** The Demo window is shown, but blank: it never shows a count. */
+  windowBlank?: boolean;
   statusBar: AriaNode[];
   notifications: AriaNode[];
   /** The title of the editor that lies over the window (Settings opens like this); undefined if none. */
@@ -75,7 +77,9 @@ function sidebarLines(nodes: readonly AriaNode[]): string[] {
   return [`Sidebar: ${title?.name ?? ''}`, ...indented(rows)];
 }
 
-function windowLines(nodes: readonly AriaNode[] | undefined): string[] {
+function windowLines(nodes: readonly AriaNode[] | undefined, blank = false): string[] {
+  if (blank)
+    return ['Window: blank (shown, but it never showed a count; see: npm run live -- logs)'];
   if (!nodes) return ['Window: none (not open, or its tab is hidden)'];
   const rows = nodes
     .filter((node) => !GROUPS.has(node.role))
@@ -110,7 +114,7 @@ export function formatSnapshot(ui: UiSnapshot): string {
     ),
     ...sidebarLines(ui.sidebar),
     line('Editor tabs', ui.editorTabs.filter(({ role }) => role === 'tab').map(label)),
-    ...windowLines(ui.window),
+    ...windowLines(ui.window, ui.windowBlank),
     line('Status bar', ui.statusBar.filter(({ role }) => !GROUPS.has(role)).map(label)),
     ...(ui.modalEditor === undefined
       ? []
@@ -171,7 +175,12 @@ export async function collectSnapshot(connection: Connection): Promise<UiSnapsho
   const { page } = connection;
   const part = async (id: string) =>
     (await readPart(page, `[id="workbench.parts.${id}"]`, `the ${id}`, false)) ?? [];
-  const frame = await guard('cannot find the Demo window', () => connection.webview());
+  let blank = false;
+  const frame = await connection.webview().catch((error: unknown) => {
+    if (!(error instanceof BlankWindowError)) throw userError(error, 'cannot find the Demo window');
+    blank = true;
+    return undefined;
+  });
   const [
     activityBar,
     sidebar,
@@ -198,6 +207,7 @@ export async function collectSnapshot(connection: Connection): Promise<UiSnapsho
     sidebar,
     editorTabs,
     window: win,
+    windowBlank: blank,
     statusBar,
     notifications: [...(toasts ?? []), ...(center ?? [])],
     modalEditor,

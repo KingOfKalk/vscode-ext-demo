@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   describeArguments,
+  describeLogEntry,
   formatConsoleEntries,
   formatConsoleEntry,
   type ConsoleEntry,
@@ -41,14 +42,24 @@ describe('formatConsoleEntry', () => {
     expect(formatConsoleEntry(entry)).toBe('2026-11-25 07:35:14.851 [console.error] boom');
   });
 
-  it('indents the lines of a stack', () => {
+  it('keeps the indentation of a stack and indents the other lines of a message', () => {
     const entry: ConsoleEntry = {
       time: T,
       kind: 'exception',
-      text: 'Error: x\n    at f (a.js:1:1)\n    at g (a.js:2:1)',
+      text: 'Error: x\n    at f (a.js:1:1)\nsecond line',
     };
-    expect(formatConsoleEntry(entry)).toBe(
-      '2026-11-25 07:35:14.851 [exception] Error: x\n    at f (a.js:1:1)\n    at g (a.js:2:1)',
+    expect(formatConsoleEntry(entry).split('\n')).toEqual([
+      '2026-11-25 07:35:14.851 [exception] Error: x',
+      '    at f (a.js:1:1)',
+      '    second line',
+    ]);
+  });
+
+  it('cuts a very long line', () => {
+    const text = 'x'.repeat(1000);
+    const line = formatConsoleEntry({ time: T, kind: 'console.error', text });
+    expect(line).toBe(
+      `2026-11-25 07:35:14.851 [console.error] ${'x'.repeat(300)}... (700 more characters)`,
     );
   });
 
@@ -77,5 +88,38 @@ describe('formatConsoleEntries', () => {
       '2026-11-25 07:35:14.853 [console.error] second',
       '2026-11-25 07:35:14.854 [exception] third',
     ]);
+  });
+});
+
+describe('describeLogEntry', () => {
+  const entry = {
+    source: 'security',
+    level: 'error',
+    text: 'Loading the stylesheet',
+    timestamp: T,
+  };
+
+  it('takes an error of the browser, such as a stylesheet that the CSP blocks', () => {
+    expect(describeLogEntry({ ...entry, url: 'https://x.test/a.css' })).toEqual({
+      time: T,
+      kind: 'log.security',
+      text: 'Loading the stylesheet (https://x.test/a.css)',
+    });
+  });
+
+  it('does not repeat an address that the text has', () => {
+    const found = describeLogEntry({
+      ...entry,
+      text: 'Refused https://x.test/a.css',
+      url: 'https://x.test/a.css',
+    });
+    expect(found?.text).toBe('Refused https://x.test/a.css');
+  });
+
+  it('leaves out what is not an error, and what the console and exceptions tell already', () => {
+    expect(describeLogEntry({ ...entry, level: 'warning' })).toBeUndefined();
+    expect(describeLogEntry({ ...entry, level: 'info' })).toBeUndefined();
+    expect(describeLogEntry({ ...entry, source: 'javascript' })).toBeUndefined();
+    expect(describeLogEntry({ ...entry, source: 'console-api' })).toBeUndefined();
   });
 });

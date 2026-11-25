@@ -105,9 +105,14 @@ export function installedDir(): string {
   return join(EXTENSIONS, entry.relativeLocation);
 }
 
-/** Installs the .vsix, also over the same version, and checks that its files are in place. */
-export function install(vscode: string, vsix: string, env: NodeJS.ProcessEnv): void {
+/** Installs the .vsix into the session, also over the same version. Checks nothing. */
+export function installUnchecked(vscode: string, vsix: string, env: NodeJS.ProcessEnv): void {
   installVsix(vscode, vscodeFlags(PROFILE, EXTENSIONS), vsix, env, { force: true });
+}
+
+/** `installUnchecked`, and checks that the built files of the extension are in place. */
+export function install(vscode: string, vsix: string, env: NodeJS.ProcessEnv): void {
+  installUnchecked(vscode, vsix, env);
   const dir = installedDir();
   for (const file of ['dist/extension.js', 'dist/webview.js']) {
     if (!readFileSync(join(dir, file)).equals(readFileSync(join(ROOT, file)))) {
@@ -126,6 +131,13 @@ export function vscodeArgs(): string[] {
     WORKSPACE,
   ];
 }
+
+/** The Demo window is there, but it never shows a count: its script did not run. */
+export class BlankWindowError extends Error {
+  override name = 'BlankWindowError';
+}
+
+const BLANK_AFTER_MS = 10_000;
 
 export interface Connection {
   /** The window of VS Code. */
@@ -192,16 +204,22 @@ async function demoFrame(page: Page): Promise<Frame | undefined> {
   const outer = () =>
     page.frames().filter((frame) => URL.parse(frame.url())?.searchParams.get('extensionId') === id);
   if (outer().length === 0) return undefined;
-  return waitFor(
-    'the Demo window shows the count',
-    async () => {
-      for (const frame of outer().flatMap((frame) => frame.childFrames())) {
-        if (await showsCount(frame)) return frame;
-      }
-      return undefined;
-    },
-    { timeoutMs: 10_000 },
-  );
+  try {
+    return await waitFor(
+      'the Demo window shows the count',
+      async () => {
+        for (const frame of outer().flatMap((frame) => frame.childFrames())) {
+          if (await showsCount(frame)) return frame;
+        }
+        return undefined;
+      },
+      { timeoutMs: BLANK_AFTER_MS },
+    );
+  } catch (error) {
+    throw new BlankWindowError('the Demo window is shown, but has no count (its script failed?)', {
+      cause: error,
+    });
+  }
 }
 
 async function showsCount(frame: Frame): Promise<boolean> {

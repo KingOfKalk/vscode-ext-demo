@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeReinstall, hashOf } from '../../../scripts/live/reload.ts';
+import { describeNoActivation, describeReinstall, hashOf } from '../../../scripts/live/reload.ts';
 
 const files = (state: Record<string, [string | undefined, string, string]>) =>
   Object.entries(state).map(([file, [before, built, after]]) => ({ file, before, built, after }));
@@ -18,12 +18,12 @@ describe('describeReinstall', () => {
       files({
         'dist/extension.js': ['a', 'b', 'b'],
         'dist/webview.js': ['c', 'c', 'c'],
-        'package.json': ['d', 'd', 'd'],
+        'media/window.css': ['d', 'd', 'd'],
       }),
     );
     expect(text).toEqual({
       changed: ['dist/extension.js'],
-      same: ['dist/webview.js', 'package.json'],
+      same: ['dist/webview.js', 'media/window.css'],
     });
   });
 
@@ -50,5 +50,29 @@ describe('describeReinstall', () => {
     expect(() => describeReinstall(files({ 'dist/webview.js': ['a', 'b', 'c'] }))).toThrow(
       /dist\/webview\.js/,
     );
+  });
+});
+
+describe('describeNoActivation', () => {
+  it('names both logs and prints their ends, the host log first: that is where activate() fails', () => {
+    const text = describeNoActivation(
+      45,
+      {
+        where: 'logs/1/Demo.log',
+        end: '2026-11-25 07:40:52.283 [info] Extension activated, count 3',
+      },
+      { where: 'logs/1/exthost.log', end: 'a\nb', error: 'Error: test hook\n\tat f' },
+    );
+    expect(text.split('\n')).toEqual([
+      'the extension did not activate again within 45 s',
+      'the last error in the extension host log (logs/1/exthost.log):',
+      '  Error: test hook',
+      '  \tat f',
+      'the end of the extension host log (logs/1/exthost.log):',
+      '  a',
+      '  b',
+      'the end of the Demo log (logs/1/Demo.log):',
+      '  2026-11-25 07:40:52.283 [info] Extension activated, count 3',
+    ]);
   });
 });

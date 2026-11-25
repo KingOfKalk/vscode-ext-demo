@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  describeApplied,
   describeChange,
   mergeSetting,
   parseSettingValue,
@@ -132,5 +133,39 @@ describe('describeChange', () => {
     expect(describeChange('m', { found: true, value: { a: [1] } }, { a: [1] })).toBe(
       'm: {"a":[1]} (unchanged)',
     );
+  });
+});
+
+describe('describeApplied', () => {
+  const P = 'vscodeExtDemo.';
+  const seen = { message: 'Hi', step: 5, showStatusBar: true };
+
+  it('says what the extension now has, if it is what was written', () => {
+    expect(describeApplied(`${P}step`, P, 5, seen)).toEqual({
+      ok: true,
+      text: 'the extension now has step = 5',
+    });
+  });
+
+  it('says so if the extension has another value than the one written', () => {
+    const applied = describeApplied(`${P}step`, P, 500, { ...seen, step: 100 });
+    expect(applied.ok).toBe(true);
+    expect(applied.text).toBe(
+      'the extension now has step = 100, not 500: it uses its own limit or default',
+    );
+  });
+
+  it('fails if the extension has no such setting', () => {
+    const applied = describeApplied(`${P}stepp`, P, 5, seen);
+    expect(applied.ok).toBe(false);
+    expect(applied.text).toContain('no setting "stepp"');
+    expect(applied.text).toContain('message, step, showStatusBar');
+  });
+
+  it('says it if the line cannot be read, without claiming a value', () => {
+    expect(describeApplied(`${P}step`, P, 5, undefined)).toEqual({
+      ok: true,
+      text: 'the extension saw a settings change, but its log line is not readable',
+    });
   });
 });
