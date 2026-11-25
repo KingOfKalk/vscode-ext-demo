@@ -1,25 +1,18 @@
 // VS Code of the session: its files, its command line, and the connection to its window.
-import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Browser, type Frame, type Page } from 'playwright-core';
-import {
-  cleanEnv,
-  installVsix,
-  QUIET_FLAGS,
-  QUIET_SETTINGS,
-  run,
-  vscodeFlags,
-} from '../vscode-run.mjs';
+import { installVsix, QUIET_FLAGS, QUIET_SETTINGS, run, vscodeFlags } from '../vscode-run.mjs';
 import { ensureVscode, minimumVersion } from '../vscode.mjs';
 import { DEBUG_PORT, INSPECT_PORT } from './novnc.ts';
 import { leaderRuns, waitFor } from './processes.ts';
 import {
+  assertOwnSession,
   EXTENSIONS,
   HOME,
   PROFILE,
   readSession,
   ROOT,
-  RUN_DIR,
   sessionState,
   TEMP,
   WORKSPACE,
@@ -75,19 +68,17 @@ export function packageVsix(): string {
 }
 
 /**
- * Makes the profile, the workspace and HOME. `keep` uses what the last session left; the count is
- * saved for the workspace folder, which VS Code recognizes by more than its path.
+ * Makes the profile, the workspace and HOME in the directory of the session. `keep` uses what the
+ * last session left; the count is saved for the workspace folder, which VS Code recognizes by more
+ * than its path.
  * @returns whether there was something to keep
  */
 export function prepareFiles(keep: boolean): boolean {
-  const stat = lstatSync(RUN_DIR, { throwIfNoEntry: false });
-  // The path is known to everyone on this machine, and settings can run programs.
-  if (stat && (!stat.isDirectory() || stat.uid !== process.getuid?.())) {
-    throw new Error(`${RUN_DIR} is not a directory of this user`);
+  // Not the directory itself: the session file, which keeps other starts out, is in it.
+  for (const dir of keep ? [TEMP] : [PROFILE, EXTENSIONS, WORKSPACE, HOME, TEMP]) {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
-  if (!keep) rmSync(RUN_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   const kept = existsSync(PROFILE);
-  mkdirSync(RUN_DIR, { recursive: true, mode: 0o700 });
   for (const dir of [join(PROFILE, 'User'), EXTENSIONS, WORKSPACE, HOME, TEMP]) {
     mkdirSync(dir, { recursive: true });
   }
@@ -98,11 +89,6 @@ export function prepareFiles(keep: boolean): boolean {
     if (!existsSync(file)) writeFileSync(file, text);
   }
   return kept;
-}
-
-/** The environment of the session: VS Code puts sockets and caches into the temporary directories. */
-export function sessionEnv(): NodeJS.ProcessEnv {
-  return { ...cleanEnv(HOME), TMPDIR: TEMP, XDG_RUNTIME_DIR: TEMP };
 }
 
 /** The directory of the installed extension. */
@@ -159,6 +145,7 @@ export async function connect(): Promise<Connection> {
   if (!session || !vscode || sessionState(session) !== 'running' || !leaderRuns(vscode)) {
     throw new Error('no live session runs; start one: npm run live -- start');
   }
+  assertOwnSession(session);
   return attach(15_000);
 }
 

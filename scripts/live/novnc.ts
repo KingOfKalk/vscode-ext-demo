@@ -4,7 +4,6 @@ import { isIP } from 'node:net';
 /** VS Code: Chrome DevTools protocol of the window, and Node inspector of the extension host. */
 export const DEBUG_PORT = 9222;
 export const INSPECT_PORT = 9229;
-export const VNC_PORT = 5900;
 
 export interface NovncConfig {
   host: string;
@@ -25,7 +24,7 @@ export function readNovncConfig(env: NodeJS.ProcessEnv): NovncConfig {
   if (!/^\d+$/.test(portText) || port < 1 || port > 65535) {
     throw new Error(`LIVE_NOVNC_PORT is ${JSON.stringify(portText)}, expected 1 to 65535`);
   }
-  if ([DEBUG_PORT, INSPECT_PORT, VNC_PORT].includes(port)) {
+  if ([DEBUG_PORT, INSPECT_PORT].includes(port)) {
     throw new Error(`LIVE_NOVNC_PORT is ${portText}, which the session uses itself`);
   }
   return { host, port };

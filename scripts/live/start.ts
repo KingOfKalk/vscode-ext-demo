@@ -4,15 +4,18 @@ import {
   accessSync,
   closeSync,
   constants,
+  lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
-import { connect as connectTcp } from 'node:net';
 import { delimiter, join } from 'node:path';
 import { spawnGroup, startXvfb } from '../vscode-run.mjs';
+import { describeFailure } from '../vscode.mjs';
+import { sessionEnv } from './environment.ts';
+import { isActivated, listRuns, runLogs, tail } from './logs.ts';
 import {
   DEBUG_PORT,
   INSPECT_PORT,
@@ -20,7 +23,6 @@ import {
   novncAddress,
   novncUrl,
   readNovncConfig,
-  VNC_PORT,
   type NovncConfig,
 } from './novnc.ts';
 import {
@@ -34,46 +36,46 @@ import {
 } from './processes.ts';
 import {
   createSession,
+  ensureRunDir,
   LOG_DIR,
   NOVNC_TOKENS,
+  PROFILE,
   readSession,
   removeSession,
+  ROOT,
   saveSession,
   sessionState,
   stopProcesses,
+  VNC_SOCKET,
   type Session,
 } from './session.ts';
 import {
   attach,
   downloadVscode,
+  extensionId,
   install,
   packageVsix,
   prepareFiles,
-  sessionEnv,
   vscodeArgs,
   vscodeVersion,
 } from './vscode.ts';
 
 const NOVNC_FILES = '/usr/share/novnc';
 const SCREEN = '1440x900x24';
+const VSCODE_LOGS = join(PROFILE, 'logs');
 
 export async function start(keep: boolean): Promise<void> {
   const novnc = readNovncConfig(process.env);
+  ensureRunDir();
   assertNotRunning();
   assertInstalled();
-  for (const [use, host, port] of [
-    ['noVNC', novnc.host, novnc.port],
-    ['VNC', '127.0.0.1', VNC_PORT],
-    ['window debugger', '127.0.0.1', DEBUG_PORT],
-    ['extension host debugger', '127.0.0.1', INSPECT_PORT],
-  ] as const) {
-    await assertPortFree(use, host, port);
-  }
+  await assertPortsFree(novnc);
 
   // The session file comes first: it keeps a second start out, and names everything that runs.
   const token = randomBytes(16).toString('hex');
   const session: Session = {
     state: 'starting',
+    root: ROOT,
     boot: bootId(),
     starter: identify('start', process.pid),
     startedAt: new Date().toISOString(),
@@ -95,9 +97,13 @@ export async function start(keep: boolean): Promise<void> {
     session.state = 'running';
     saveSession(session);
   } catch (error) {
-    await stopProcesses(session.processes);
+    const left = await stopProcesses(session.processes).then(
+      () => '',
+      (stopError: unknown) => describeFailure(stopError),
+    );
     removeSession();
-    throw error;
+    if (left === '') throw error;
+    throw new Error(`the start failed, and the cleanup ${left}`, { cause: error });
   }
 
   console.log(
@@ -114,7 +120,11 @@ export async function start(keep: boolean): Promise<void> {
 function assertNotRunning(): void {
   const session = readSession();
   if (!session) return;
-  switch (sessionState(session)) {
+  const state = sessionState(session);
+  if (state !== 'gone' && session.root !== ROOT) {
+    throw new Error(`a live session of ${session.root} is already ${state}; stop it there first`);
+  }
+  switch (state) {
     case 'starting':
       throw new Error(`a live session is already starting (process ${session.starter.pid})`);
     case 'running':
@@ -122,6 +132,12 @@ function assertNotRunning(): void {
     case 'gone':
       removeSession();
   }
+}
+
+async function assertPortsFree(novnc: NovncConfig): Promise<void> {
+  await assertPortFree('noVNC', novnc.host, novnc.port);
+  await assertPortFree('window debugger', '127.0.0.1', DEBUG_PORT);
+  await assertPortFree('extension host debugger', '127.0.0.1', INSPECT_PORT);
 }
 
 /** Throws if a program that the session needs is not installed. */
@@ -163,19 +179,23 @@ class Starter {
     const env = sessionEnv();
     install(vscode, vsix, env);
     this.#signal.throwIfAborted();
+    // Again: VS Code would silently take other ports, and the build took a while.
+    await assertPortsFree(novnc);
 
     const display = await this.#startXvfb(env);
     const desktop = { ...env, DISPLAY: display };
     const openbox = this.#launch('openbox', 'openbox', ['--sm-disable'], desktop);
+    rmSync(VNC_SOCKET, { force: true });
     const vnc = this.#launch('x11vnc', 'x11vnc', vncArgs(display), desktop);
-    await this.#ready(vnc, 'answers', 15_000, () => accepts(VNC_PORT));
+    await this.#ready(vnc, 'opens its socket', 15_000, () => Promise.resolve(isSocket(VNC_SOCKET)));
 
-    writeFileSync(NOVNC_TOKENS, `${token}: 127.0.0.1:${VNC_PORT}\n`, { mode: 0o600 });
+    writeFileSync(NOVNC_TOKENS, `${token}: unix_socket:${VNC_SOCKET}\n`, { mode: 0o600 });
     const web = this.#launch('novnc', 'websockify', novncArgs(novnc), env);
     const page = new URL(this.#session.novncUrl);
     page.hash = '';
     await this.#ready(web, 'serves its page', 15_000, () => answers(page.href));
 
+    const before = listRuns(VSCODE_LOGS);
     const code = this.#launch('vscode', join(vscode, 'code'), vscodeArgs(), desktop);
     await this.#ready(code, 'opens its debug port', 60_000, () =>
       answers(`http://127.0.0.1:${DEBUG_PORT}/json/version`),
@@ -185,8 +205,26 @@ class Starter {
     await this.#ready(code, 'starts its extension host', 60_000, () =>
       answers(`http://127.0.0.1:${INSPECT_PORT}/json/version`),
     );
+    await this.#activated(code, before);
     for (const info of [openbox, vnc, web, code]) assertRuns(info);
     return kept;
+  }
+
+  /** Waits for the extension. The status bar does not tell: a kept profile may hide the count. */
+  async #activated(code: ProcessInfo, before: readonly string[]): Promise<void> {
+    const id = extensionId();
+    await waitFor(
+      () => {
+        const logs = runLogs(VSCODE_LOGS, before, id);
+        if (!logs) return `the window writes logs to ${VSCODE_LOGS}`;
+        return `the extension activates; see ${logs.demo}\nThe end of ${logs.host}:\n${tail(logs.host)}`;
+      },
+      () => {
+        assertRuns(code);
+        return isActivated(VSCODE_LOGS, before, id) || undefined;
+      },
+      { timeoutMs: 30_000, signal: this.#signal },
+    );
   }
 
   async #startXvfb(env: NodeJS.ProcessEnv): Promise<string> {
@@ -259,19 +297,18 @@ function withLog<T>(name: ProcessName, use: (output: number) => T): T {
 
 function assertRuns(info: ProcessInfo): void {
   if (leaderRuns(info)) return;
-  const lines = readFileSync(logFile(info.name), 'utf8').trimEnd().split('\n').slice(-10);
-  throw new Error(`${info.name} ended. The end of its log:\n${lines.join('\n')}`);
+  throw new Error(`${info.name} ended. The end of its log:\n${tail(logFile(info.name))}`);
 }
 
 /**
- * No VNC password: x11vnc listens on 127.0.0.1 only, and who can connect there is on this machine
- * and can as well use the debug ports.
+ * A unix socket in a directory of this user, so no VNC password. Never a port, also not one on
+ * 127.0.0.1: x11vnc takes WebSockets there, from web pages of any origin, around the token of noVNC.
  */
 function vncArgs(display: string): string[] {
   return [
-    ...['-display', display, '-rfbport', String(VNC_PORT)],
-    // Without all three it also listens on IPv6; -rfbportv6 alone or -noipv6 alone is not enough.
-    ...['-localhost', '-noipv6', '-rfbportv6', '-1'],
+    ...['-display', display, '-unixsock', VNC_SOCKET, '-rfbport', '0'],
+    // Without these two it still listens on [::]:5900.
+    ...['-noipv6', '-rfbportv6', '-1'],
     ...['-nopw', '-norc'],
     ...['-forever', '-shared', '-quiet'],
   ];
@@ -291,17 +328,8 @@ function novncArgs(novnc: NovncConfig): string[] {
   ];
 }
 
-function accepts(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = connectTcp({ host: '127.0.0.1', port, timeout: 2000 });
-    const end = (result: boolean) => () => {
-      socket.destroy();
-      resolve(result);
-    };
-    socket.once('connect', end(true));
-    socket.once('error', end(false));
-    socket.once('timeout', end(false));
-  });
+function isSocket(file: string): boolean {
+  return lstatSync(file, { throwIfNoEntry: false })?.isSocket() ?? false;
 }
 
 async function answers(url: string): Promise<boolean> {

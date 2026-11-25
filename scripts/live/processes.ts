@@ -93,9 +93,12 @@ export interface WaitOptions {
   signal?: AbortSignal | undefined;
 }
 
-/** Waits until `attempt` returns something; an error it throws ends the wait. */
+/**
+ * Waits until `attempt` returns something; an error it throws ends the wait.
+ * @param what for the error; a function is called only then
+ */
 export async function waitFor<T>(
-  what: string,
+  what: string | (() => string),
   attempt: () => T | undefined | Promise<T | undefined>,
   { timeoutMs, pauseMs = 100, signal }: WaitOptions,
 ): Promise<T> {
@@ -105,7 +108,8 @@ export async function waitFor<T>(
     const value = await attempt();
     if (value !== undefined) return value;
     if (Date.now() > end) {
-      throw new Error(`waited ${timeoutMs / 1000} s, but this did not happen: ${what}`);
+      const text = typeof what === 'string' ? what : what();
+      throw new Error(`waited ${timeoutMs / 1000} s, but this did not happen: ${text}`);
     }
     await sleep(pauseMs, undefined, { signal }).catch(() => undefined);
   }

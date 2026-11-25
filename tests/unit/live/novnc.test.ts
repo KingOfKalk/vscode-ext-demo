@@ -30,7 +30,7 @@ describe('readNovncConfig', () => {
     expect(() => readNovncConfig({ LIVE_NOVNC_PORT: port })).toThrow('LIVE_NOVNC_PORT');
   });
 
-  it.each(['9222', '9229', '5900'])('refuses the port %s of the session itself', (port) => {
+  it.each(['9222', '9229'])('refuses the port %s of the session itself', (port) => {
     expect(() => readNovncConfig({ LIVE_NOVNC_PORT: port })).toThrow('LIVE_NOVNC_PORT');
   });
 });
