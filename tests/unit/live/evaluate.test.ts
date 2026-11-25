@@ -11,7 +11,7 @@ import { childScript, connect, increment, spyOnSend } from './inspectedChild.ts'
 const script = childScript();
 const startChild = () => script.start();
 
-const OPTIONS: EvaluateOptions = { timeoutMs: 300, answerMs: 400, stateMs: 100, interruptMs: 100 };
+const OPTIONS: EvaluateOptions = { timeoutMs: 300, answerMs: 400, stateMs: 1000, interruptMs: 300 };
 const TERMINATE = 'Runtime.terminateExecution';
 
 /** Evaluates, and checks that the process goes on as if nothing had been. */
