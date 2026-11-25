@@ -1,5 +1,5 @@
 name: Set up Node and dependencies
-description: Install the Node version from package.json engines and run npm ci.
+description: Install the Node version from package.json engines and the npm packages, without lifecycle scripts.
 
 inputs:
   cache:
@@ -15,6 +15,9 @@ runs:
         node-version-file: package.json
         cache: ${{ inputs.cache == 'true' && 'npm' || '' }}
         package-manager-cache: false
+    # No package gets to run code by being installed. On Linux two have a script, and nothing here
+    # needs them: esbuild (a faster command line; the API finds the binary in @esbuild/*) and
+    # @vscode/vsce-sign (the signing tool).
     - name: Install dependencies
       shell: bash
-      run: npm ci
+      run: npm ci --ignore-scripts

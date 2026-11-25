@@ -33,6 +33,7 @@ updates:
         exclude-patterns:
           - esbuild
           - typescript
+          - '@vscode/vsce'
           - playwright-core
         update-types:
           - minor

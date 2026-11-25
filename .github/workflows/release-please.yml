@@ -16,8 +16,10 @@ defaults:
     shell: bash -euo pipefail {0}
 
 # release-please -> find-release -> (the latest release has no .vsix) package -> publish.
-# npm runs only in `package`, with a read-only token. Only `publish` can write to the release, and
-# it runs no code from the repository or from npm.
+# npm runs only in `package`, with a read-only token. That job does not run `npm run check`: the
+# required checks passed on the same tree, and the tools it starts (eslint, vitest, …) are
+# auto-merged by Dependabot and could change the .vsix before the upload. Only `publish` can write
+# to the release, and it runs no code from the repository or from npm.
 jobs:
   release-please:
     runs-on: ubuntu-26.04
@@ -111,8 +113,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cache: 'false'
-      - name: Check
-        run: npm run check
       - name: Package
         run: npm run package
       - name: Check the .vsix

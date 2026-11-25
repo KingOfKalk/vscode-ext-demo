@@ -42,10 +42,13 @@ describe('dependencyReasons', () => {
     expect(dependencyReasons([update])).toEqual([]);
   });
 
-  it.each(['esbuild', 'typescript', 'playwright-core'])('leaves the package %s open', (name) => {
-    const reasons = dependencyReasons([dependency(name, PATCH)]);
-    expect(reasons).toEqual([`${name} is always reviewed by hand`]);
-  });
+  it.each(['esbuild', 'typescript', '@vscode/vsce', 'playwright-core'])(
+    'leaves the package %s open',
+    (name) => {
+      const reasons = dependencyReasons([dependency(name, PATCH)]);
+      expect(reasons).toEqual([`${name} is always reviewed by hand`]);
+    },
+  );
 
   it.each([
     'actions/create-github-app-token',
@@ -68,17 +71,21 @@ describe('dependencyReasons', () => {
   it('has the excluded names outside the Dependabot groups too', () => {
     const config = readFileSync(new URL('../../.github/dependabot.yml', import.meta.url), 'utf8');
     const excluded = [...config.matchAll(/exclude-patterns:\n((?: +- .+\n)+)/g)].flatMap((block) =>
-      [...(block[1] ?? '').matchAll(/- (.+)\n/g)].map((line) => line[1]),
+      [...(block[1] ?? '').matchAll(/- '?([^'\n]+)'?\n/g)].map((line) => line[1]),
     );
     expect(excluded.sort()).toEqual([...MANUAL_DEPENDENCIES].sort());
   });
 
-  it.each(['typescript-eslint', '@types/typescript', 'esbuild-plugin', 'playwright', 'x/esbuild'])(
-    'matches names exactly: %s is merged',
-    (name) => {
-      expect(dependencyReasons([dependency(name)])).toEqual([]);
-    },
-  );
+  it.each([
+    'typescript-eslint',
+    '@types/typescript',
+    'esbuild-plugin',
+    'playwright',
+    'x/esbuild',
+    'vsce',
+  ])('matches names exactly: %s is merged', (name) => {
+    expect(dependencyReasons([dependency(name)])).toEqual([]);
+  });
 
   it('merges a group of allowed dependencies', () => {
     const group = [dependency('eslint'), dependency('typescript-eslint', PATCH)];

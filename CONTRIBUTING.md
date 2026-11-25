@@ -64,14 +64,14 @@ CI ([`ci.yml`](.github/workflows/ci.yml)) runs on every pull request and push to
 - `build`: `npm run package`, `npm run check:vsix`, the `.vsix` as an artifact for 14 days
 - `smoke`: `npm run test:smoke` with that artifact, in the VS Code version in `engines.vscode`
 
-All four are required. Run `npm run check` and `npm run test:smoke` locally first. CI does not build the dev container; after changing `.devcontainer/`, rebuild it to verify.
+All four are required. Each installs with `npm ci --ignore-scripts`, so a dependency must not need its lifecycle scripts. Run `npm run check` and `npm run test:smoke` locally first. CI does not build the dev container; after changing `.devcontainer/`, rebuild it to verify.
 
 ## Releases
 
 [release-please](https://github.com/googleapis/release-please-action) ([`release-please.yml`](.github/workflows/release-please.yml)) keeps a release PR (`chore(main): release X.Y.Z`) up to date on every push to `main`: the version bump and `CHANGELOG.md`. The first release is `0.1.0`.
 
 - Merging the release PR (squash, title unchanged) tags `vX.Y.Z` and creates the GitHub release.
-- The workflow then checks that `package.json` matches the tag, runs `npm run check`, packages, checks and smoke-tests the `.vsix`, and attaches `vscode-ext-demo-X.Y.Z.vsix` to the release. A rerun of the workflow adds a missing file.
+- The workflow then checks that `package.json` matches the tag, packages, checks (`check:vsix`) and smoke-tests the `.vsix`, and attaches `vscode-ext-demo-X.Y.Z.vsix` to the release. It does not run `npm run check`: the tree passed the required checks, and the tools are auto-merged. A rerun of the workflow adds a missing file.
 - Nothing is published to a marketplace. Users install the `.vsix` by hand.
 - Do not tag, bump versions or edit `CHANGELOG.md` by hand.
 - The workflows use a GitHub App (secrets `RELEASE_APP_CLIENT_ID`, `RELEASE_APP_PRIVATE_KEY`), so that release PRs and auto-merges start the other workflows.
@@ -81,7 +81,7 @@ All four are required. Run `npm run check` and `npm run test:smoke` locally firs
 [Dependabot](.github/dependabot.yml) checks npm, GitHub Actions and the dev container weekly (7-day cooldown), with `chore(deps)` titles.
 
 - Minor and patch updates of npm and GitHub Actions are auto-merged after the required checks, but only if every commit in the PR is a verified Dependabot commit ([`dependabot-automerge.mjs`](scripts/dependabot-automerge.mjs)). The decision shows as a notice in the run.
-- Left for the owner's review: major updates, dev container updates, and `esbuild`, `typescript`, `playwright-core`, `actions/create-github-app-token`, `actions/download-artifact`, `dependabot/fetch-metadata` and `googleapis/release-please-action`. They wait for the owner; do not merge or update them on your own.
+- Left for the owner's review: major updates, dev container updates, and `esbuild`, `typescript`, `@vscode/vsce`, `playwright-core`, `actions/create-github-app-token`, `actions/download-artifact`, `dependabot/fetch-metadata` and `googleapis/release-please-action`. They wait for the owner; do not merge or update them on your own.
 - To bring a Dependabot PR up to date with `main`, comment `@dependabot rebase`. Do not use "Update branch": it adds a commit that is not Dependabot's, and auto-merge stops.
 - `@types/vscode` is ignored by Dependabot; it and `engines.vscode` are raised together by hand. TypeScript 6.1 and newer is ignored until typescript-eslint supports it.
 - Dependabot does not update the base image in `devcontainer.json`; bump it by hand.

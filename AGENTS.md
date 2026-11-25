@@ -66,7 +66,7 @@ Node 26 and npm. The dev container has both. The smoke tests need Linux with `sc
 
 | Command                           | Does                                                              |
 | --------------------------------- | ----------------------------------------------------------------- |
-| `npm ci`                          | install exactly what `package-lock.json` says                     |
+| `npm ci`                          | install exactly what `package-lock.json` says; CI adds `--ignore-scripts` |
 | `npm run check`                   | format check, lint, typecheck, unit tests, build; run before push |
 | `npm run build` / `watch`         | bundle `dist/extension.js` and `dist/webview.js`                  |
 | `npm run format`                  | rewrite files with Prettier                                       |
