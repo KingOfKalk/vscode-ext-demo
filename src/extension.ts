@@ -80,6 +80,9 @@ export function activate(context: vscode.ExtensionContext): DemoApi {
     vscode.commands.registerCommand(COMMANDS.increment, () =>
       guarded('incrementing the counter', () => store.increment(), reportError),
     ),
+    vscode.commands.registerCommand(COMMANDS.decrement, () =>
+      guarded('decrementing the counter', () => store.decrement(), reportError),
+    ),
     vscode.commands.registerCommand(COMMANDS.reset, () =>
       guarded('resetting the counter', () => store.reset(), reportError),
     ),

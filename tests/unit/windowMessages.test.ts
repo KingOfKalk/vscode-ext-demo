@@ -7,6 +7,7 @@ function setup(overrides: Partial<MessageDeps['store']> = {}) {
   const store = {
     count: 7,
     increment: vi.fn(() => Promise.resolve()),
+    decrement: vi.fn(() => Promise.resolve()),
     reset: vi.fn(() => Promise.resolve()),
     ...overrides,
   };
@@ -37,11 +38,13 @@ describe('handleWebviewMessage', () => {
     await done;
   });
 
-  it('increments and resets through the store', async () => {
+  it('increments, decrements and resets through the store', async () => {
     const { deps, store } = setup();
     await handleWebviewMessage({ type: 'increment' }, deps);
+    await handleWebviewMessage({ type: 'decrement' }, deps);
     await handleWebviewMessage({ type: 'reset' }, deps);
     expect(store.increment).toHaveBeenCalledTimes(1);
+    expect(store.decrement).toHaveBeenCalledTimes(1);
     expect(store.reset).toHaveBeenCalledTimes(1);
   });
 
@@ -63,6 +66,7 @@ describe('handleWebviewMessage', () => {
       const { deps, store, posted, warn, onError } = setup();
       await handleWebviewMessage(raw, deps);
       expect(store.increment).not.toHaveBeenCalled();
+      expect(store.decrement).not.toHaveBeenCalled();
       expect(store.reset).not.toHaveBeenCalled();
       expect(posted).toEqual([]);
       expect(warn).toHaveBeenCalledTimes(1);
@@ -76,6 +80,13 @@ describe('handleWebviewMessage', () => {
     const { deps, onError } = setup({ increment: () => Promise.reject(error) });
     await expect(handleWebviewMessage({ type: 'increment' }, deps)).resolves.toBeUndefined();
     expect(onError).toHaveBeenCalledExactlyOnceWith('incrementing the counter', error);
+  });
+
+  it('reports a rejected decrement and resolves', async () => {
+    const error = new Error('save failed');
+    const { deps, onError } = setup({ decrement: () => Promise.reject(error) });
+    await expect(handleWebviewMessage({ type: 'decrement' }, deps)).resolves.toBeUndefined();
+    expect(onError).toHaveBeenCalledExactlyOnceWith('decrementing the counter', error);
   });
 
   it('reports a rejected reset and resolves', async () => {

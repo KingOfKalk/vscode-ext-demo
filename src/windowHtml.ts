@@ -36,6 +36,7 @@ export function renderWindowHtml(o: {
 <p aria-live="polite">Clicked: <span id="count"></span></p>
 <div class="actions">
 <button type="button" id="increment">Click me</button>
+<button type="button" id="decrement">Decrement</button>
 <button type="button" id="reset">Reset</button>
 </div>
 </main>

@@ -32,14 +32,16 @@ describe('initWindow', () => {
     expect(postMessage.mock.calls).toEqual([[{ type: 'ready' }]]);
   });
 
-  it('posts increment and reset on click', () => {
+  it('posts increment, decrement and reset on click', () => {
     const { postMessage, click } = setup();
     postMessage.mockClear();
     click('increment');
+    click('decrement');
     click('reset');
     click('increment');
     expect(postMessage.mock.calls).toEqual([
       [{ type: 'increment' }],
+      [{ type: 'decrement' }],
       [{ type: 'reset' }],
       [{ type: 'increment' }],
     ]);
@@ -76,6 +78,7 @@ describe('initWindow', () => {
     const { send, text, click } = setup();
     send({ type: 'state', count: 3, message: 'm' });
     click('increment');
+    click('decrement');
     expect(text('count')).toBe('3');
     send({ type: 'state', count: 4, message: 'm' });
     expect(text('count')).toBe('4');

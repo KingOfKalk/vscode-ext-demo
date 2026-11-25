@@ -1,7 +1,13 @@
-export type ToExtension = { type: 'ready' } | { type: 'increment' } | { type: 'reset' };
+export type ToExtension =
+  { type: 'ready' } | { type: 'increment' } | { type: 'decrement' } | { type: 'reset' };
 export type ToWebview = { type: 'state'; count: number; message: string };
 
-const TO_EXTENSION_TYPES: ReadonlySet<unknown> = new Set(['ready', 'increment', 'reset']);
+const TO_EXTENSION_TYPES: ReadonlySet<unknown> = new Set([
+  'ready',
+  'increment',
+  'decrement',
+  'reset',
+]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

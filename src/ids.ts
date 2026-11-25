@@ -9,6 +9,7 @@ export const COMMANDS = {
   openWindow: 'vscodeExtDemo.openWindow',
   sayHello: 'vscodeExtDemo.sayHello',
   increment: 'vscodeExtDemo.increment',
+  decrement: 'vscodeExtDemo.decrement',
   reset: 'vscodeExtDemo.reset',
   showLog: 'vscodeExtDemo.showLog',
   /** Internal: the gear of the sidebar. Not in the command palette. */

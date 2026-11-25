@@ -20,6 +20,7 @@ The extension activates after startup and writes to the `Demo` output channel. C
 | Open Window       | opens the Demo window (an editor tab), or reveals it      |
 | Say Hello         | shows the `message` setting as a notification             |
 | Increment Counter | adds `step` to the counter                                |
+| Decrement Counter | subtracts `step` from the counter, never below 0          |
 | Reset Counter     | sets the counter to 0                                     |
 | Show Log          | opens the `Demo` output channel                           |
 
@@ -30,7 +31,7 @@ Settings:
 | Setting                      | Default                  | Meaning                                              |
 | ---------------------------- | ------------------------ | ---------------------------------------------------- |
 | `vscodeExtDemo.message`      | `Hello from kingofkalk!` | greeting for Say Hello and the window                |
-| `vscodeExtDemo.step`         | `1`                      | whole number from 1 to 100 added per increment       |
+| `vscodeExtDemo.step`         | `1`                      | whole number from 1 to 100 added per increment, subtracted per decrement |
 | `vscodeExtDemo.showStatusBar` | `true`                  | show the counter in the status bar                   |
 | `vscodeExtDemo.openLocation` | `tab`                    | `tab` or `beside`; used the next time the window opens |
 
