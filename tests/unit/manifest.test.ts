@@ -34,6 +34,13 @@ interface Manifest {
   scripts: Record<string, string>;
   files: string[];
   activationEvents: string[];
+  capabilities: {
+    untrustedWorkspaces: {
+      supported: boolean | string;
+      description?: string;
+      restrictedConfigurations?: string[];
+    };
+  };
   contributes: {
     commands: Command[];
     menus: { commandPalette: Menu[]; 'view/title': Menu[] };
@@ -72,6 +79,14 @@ describe('package.json manifest', () => {
 
   it('activates after startup and when a window is restored', () => {
     expect(pkg.activationEvents).toEqual(['onStartupFinished', `onWebviewPanel:${VIEW_TYPE}`]);
+  });
+
+  it('works in an untrusted folder, but ignores the message of that folder', () => {
+    const { supported, description, restrictedConfigurations } =
+      pkg.capabilities.untrustedWorkspaces;
+    expect(supported).toBe('limited');
+    expect(description?.length).toBeGreaterThan(10);
+    expect(restrictedConfigurations).toEqual([`${CONFIG_SECTION}.message`]);
   });
 });
 

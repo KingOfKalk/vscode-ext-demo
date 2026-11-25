@@ -35,6 +35,8 @@ Settings:
 | `vscodeExtDemo.showStatusBar` | `true`                  | show the counter in the status bar                   |
 | `vscodeExtDemo.openLocation` | `tab`                    | `tab` or `beside`; used the next time the window opens |
 
+In an untrusted folder (Restricted Mode) the extension works, but ignores the `message` set by that folder's `.vscode/settings.json`; your own `message` applies.
+
 ## Build it yourself
 
 Needs Node 26. The dev container (`.devcontainer/`) has it.
