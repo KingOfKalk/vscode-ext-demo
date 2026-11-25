@@ -1,5 +1,5 @@
-// The commands that act on the window of the running session, in one table: which they are, and what
-// each does. `cli.ts` takes the list from here, so a command cannot be missing from one and not the other.
+// The commands that act on the window of the running session, in one table. `cli.ts` sends every
+// command it does not handle itself to `onWindow`, so a command is added here and in `args.ts` only.
 import { click, key, runCommand, type } from './interact.ts';
 import { userError } from './errors.ts';
 import type { LiveCommand } from './args.ts';

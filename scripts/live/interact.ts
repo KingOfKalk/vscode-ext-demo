@@ -140,15 +140,6 @@ export async function resolve(
   return { locator, description: candidateTarget(only) };
 }
 
-/** `resolve`, for those that only need the element. */
-export async function resolveTarget(
-  page: Page,
-  webview: Frame | undefined,
-  target: string,
-): Promise<Locator> {
-  return (await resolve(page, webview, target)).locator;
-}
-
 async function resolveNow(connection: Connection, target: string): Promise<Resolved> {
   // The Demo window is a new frame each time its tab is shown, so ask for it each time.
   return resolve(connection.page, await connection.webview(), target);

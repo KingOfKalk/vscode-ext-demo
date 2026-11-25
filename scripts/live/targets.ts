@@ -1,5 +1,5 @@
 // What `click` and the others point at, in text: parsing it and telling the user which things match.
-// Pure; the part that looks at the window is `resolveTarget` in interact.ts.
+// Pure; the part that looks at the window is `resolve` in interact.ts.
 import type { AriaNode } from './aria.ts';
 
 /** `workbench` is the window of VS Code, `webview` the Demo window inside it. */
