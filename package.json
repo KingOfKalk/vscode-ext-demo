@@ -18,9 +18,116 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onWebviewPanel:vscodeExtDemo.window"
   ],
   "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscodeExtDemo.openWindow",
+        "title": "Open Window",
+        "category": "Demo"
+      },
+      {
+        "command": "vscodeExtDemo.sayHello",
+        "title": "Say Hello",
+        "category": "Demo"
+      },
+      {
+        "command": "vscodeExtDemo.increment",
+        "title": "Increment Counter",
+        "category": "Demo"
+      },
+      {
+        "command": "vscodeExtDemo.reset",
+        "title": "Reset Counter",
+        "category": "Demo"
+      },
+      {
+        "command": "vscodeExtDemo.showLog",
+        "title": "Show Log",
+        "category": "Demo"
+      },
+      {
+        "command": "vscodeExtDemo.openSettings",
+        "title": "Open Settings",
+        "category": "Demo",
+        "icon": "$(gear)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "vscodeExtDemo.openSettings",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vscodeExtDemo.openSettings",
+          "when": "view == vscodeExtDemo.actions",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Demo",
+      "properties": {
+        "vscodeExtDemo.message": {
+          "type": "string",
+          "default": "Hello from kingofkalk!",
+          "order": 1,
+          "description": "The greeting that Say Hello shows and the Demo window displays."
+        },
+        "vscodeExtDemo.step": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 100,
+          "order": 2,
+          "description": "How much the counter grows with each increment, from 1 to 100."
+        },
+        "vscodeExtDemo.showStatusBar": {
+          "type": "boolean",
+          "default": true,
+          "order": 3,
+          "description": "Show the counter in the status bar."
+        },
+        "vscodeExtDemo.openLocation": {
+          "type": "string",
+          "default": "tab",
+          "enum": [
+            "tab",
+            "beside"
+          ],
+          "order": 4,
+          "enumDescriptions": [
+            "Open the Demo window in the active editor group.",
+            "Open the Demo window beside the active editor group."
+          ],
+          "description": "Where the Demo window opens the next time you open it."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "vscodeExtDemo",
+          "title": "Demo",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "vscodeExtDemo": [
+        {
+          "id": "vscodeExtDemo.actions",
+          "name": "Demo"
+        }
+      ]
+    }
+  },
   "files": [
     "LICENSE",
     "dist/extension.js",
@@ -33,20 +140,23 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/webview && tsc --noEmit -p tests/webview",
     "test": "vitest run",
+    "test:smoke": "node tests/smoke/run.mjs",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
     "package": "node scripts/package.mjs",
     "check:vsix": "node scripts/check-vsix.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@types/jsdom": "30.0.0",
     "@types/node": "26.6.7",
     "@types/vscode": "1.146.0",
     "@vscode/vsce": "4.1.1",
     "esbuild": "0.28.2",
     "eslint": "10.15.0",
     "globals": "17.14.0",
+    "jsdom": "31.0.1",
     "prettier": "3.10.1",
     "typescript": "~6.0.3",
     "typescript-eslint": "8.74.0",

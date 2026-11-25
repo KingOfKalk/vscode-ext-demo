@@ -1,0 +1,11 @@
+{
+  "name": "smoke-driver",
+  "description": "Empty extension: VS Code runs a test suite only next to an extension in development.",
+  "version": "0.0.0",
+  "publisher": "kingofkalk",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "*"
+  }
+}

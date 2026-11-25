@@ -18,7 +18,7 @@ export const MANUAL_DEPENDENCIES = [
   'typescript',
   // Drives the live session, which CI does not run.
   'playwright-core',
-  // Not run by CI, and they get the App key or run next to a write token.
+  // They get the App key or run next to a write token; CI does not test that.
   'actions/create-github-app-token',
   'actions/download-artifact',
   'dependabot/fetch-metadata',

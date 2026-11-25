@@ -18,6 +18,10 @@ updates:
     ignore:
       # Matches the minimum VS Code version (`engines.vscode`); both are raised by hand.
       - dependency-name: '@types/vscode'
+      # typescript-eslint supports TypeScript below 6.1 only (peer dependency), so npm cannot
+      # install a newer one. Remove this once typescript-eslint supports one.
+      - dependency-name: typescript
+        versions: ['>=6.1']
     groups:
       # One PR: required checks must be up to date with main, and Dependabot rebases PRs that are
       # behind without a conflict only on its weekly run, so separate auto-merged PRs would wait.

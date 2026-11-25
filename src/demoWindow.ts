@@ -1,0 +1,76 @@
+import * as vscode from 'vscode';
+import { VIEW_TYPE } from './ids';
+import { createNonce } from './nonce';
+import { renderWindowHtml } from './windowHtml';
+import type { PanelHandle, WindowHost } from './windowController';
+
+const TITLE = 'Demo Window';
+
+/** The VS Code side of the Demo window: creates panels and maps them to `PanelHandle`. */
+export class VsCodeWindowHost implements WindowHost {
+  constructor(private readonly extensionUri: vscode.Uri) {}
+
+  create(location: 'tab' | 'beside'): PanelHandle {
+    const column = location === 'beside' ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
+    return this.wrap(
+      vscode.window.createWebviewPanel(VIEW_TYPE, TITLE, column, this.webviewOptions()),
+    );
+  }
+
+  /** Maps a panel that VS Code restored. */
+  adopt(panel: vscode.WebviewPanel): PanelHandle {
+    // The saved options hold the extension folder, which changes with a new version.
+    panel.webview.options = this.webviewOptions();
+    return this.wrap(panel);
+  }
+
+  async closeStaleTabs(): Promise<void> {
+    // The tab input of a webview panel has the view type with a prefix.
+    const tabs = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .filter(
+        (tab) =>
+          tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith(VIEW_TYPE),
+      );
+    if (tabs.length > 0 && !(await vscode.window.tabGroups.close(tabs))) {
+      throw new Error(`VS Code did not close ${tabs.length} old window tab(s)`);
+    }
+  }
+
+  private webviewOptions(): vscode.WebviewOptions {
+    return {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(this.extensionUri, 'dist'),
+        vscode.Uri.joinPath(this.extensionUri, 'media'),
+      ],
+    };
+  }
+
+  private wrap(panel: vscode.WebviewPanel): PanelHandle {
+    const { webview } = panel;
+    return {
+      reveal: () => {
+        panel.reveal();
+      },
+      dispose: () => {
+        panel.dispose();
+      },
+      post: (message) => webview.postMessage(message),
+      onMessage: (listener) => webview.onDidReceiveMessage(listener),
+      onDispose: (listener) => panel.onDidDispose(listener),
+      setHtml: () => {
+        webview.html = renderWindowHtml({
+          nonce: createNonce(),
+          cspSource: webview.cspSource,
+          scriptUri: this.resourceUri(webview, 'dist', 'webview.js'),
+          styleUri: this.resourceUri(webview, 'media', 'window.css'),
+        });
+      },
+    };
+  }
+
+  private resourceUri(webview: vscode.Webview, ...path: string[]): string {
+    return webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, ...path)).toString();
+  }
+}

@@ -13,7 +13,26 @@ Requires VS Code 1.146.0 or newer. Updates are manual: install the next `.vsix` 
 
 ## Commands
 
-The extension activates after startup and writes to the `Demo` output channel. Its commands (category `Demo`), settings, sidebar, window and status bar come with [#3](https://github.com/KingOfKalk/vscode-ext-demo/issues/3).
+The extension activates after startup and writes to the `Demo` output channel. Commands (category `Demo`):
+
+| Command           | Does                                                      |
+| ----------------- | --------------------------------------------------------- |
+| Open Window       | opens the Demo window (an editor tab), or reveals it      |
+| Say Hello         | shows the `message` setting as a notification             |
+| Increment Counter | adds `step` to the counter                                |
+| Reset Counter     | sets the counter to 0                                     |
+| Show Log          | opens the `Demo` output channel                           |
+
+The count is kept per workspace. The Demo window, the status bar item (`Demo: <count>`, click opens the window) and the Demo view in the activity bar (gear: this extension's settings) all show it.
+
+Settings:
+
+| Setting                      | Default                  | Meaning                                              |
+| ---------------------------- | ------------------------ | ---------------------------------------------------- |
+| `vscodeExtDemo.message`      | `Hello from kingofkalk!` | greeting for Say Hello and the window                |
+| `vscodeExtDemo.step`         | `1`                      | whole number from 1 to 100 added per increment       |
+| `vscodeExtDemo.showStatusBar` | `true`                  | show the counter in the status bar                   |
+| `vscodeExtDemo.openLocation` | `tab`                    | `tab` or `beside`; used the next time the window opens |
 
 ## Build it yourself
 
@@ -21,8 +40,9 @@ Needs Node 26. The dev container (`.devcontainer/`) has it.
 
 ```sh
 npm ci
-npm run check    # format, lint, types, unit tests, build
-npm run package  # writes vscode-ext-demo-<version>.vsix
+npm run check       # format, lint, types, unit tests, build
+npm run package     # writes vscode-ext-demo-<version>.vsix
+npm run test:smoke  # tests the .vsix in a real VS Code, see AGENTS.md
 ```
 
 Working on the code, as a person or an agent: see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

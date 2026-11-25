@@ -117,6 +117,21 @@ jobs:
         run: npm run package
       - name: Check the .vsix
         run: npm run check:vsix -- "vscode-ext-demo-${TAG#v}.vsix"
+      # VS Code is downloaded, not taken from the cache.
+      - name: Install system packages
+        run: scripts/install-system-deps.sh
+      - name: Smoke tests
+        id: smoke
+        run: npm run test:smoke -- --report "$RUNNER_TEMP/smoke.json" "vscode-ext-demo-${TAG#v}.vsix"
+      - name: Smoke tests summary
+        if: ${{ !cancelled() }}
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          version="$(jq -er '.engines.vscode | ltrimstr("^")' package.json)"
+          node scripts/ci-summary.mjs test --title "Smoke tests in VS Code $version" \
+            --report "$RUNNER_TEMP/smoke.json" --root "$GITHUB_WORKSPACE" \
+            --outcome "$SMOKE_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
       # overwrite: a rerun uploads the same name again.
       - name: Upload the .vsix
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
