@@ -15,9 +15,11 @@ runs:
         node-version-file: package.json
         cache: ${{ inputs.cache == 'true' && 'npm' || '' }}
         package-manager-cache: false
-    # No package gets to run code by being installed. On Linux two have a script, and nothing here
-    # needs them: esbuild (a faster command line; the API finds the binary in @esbuild/*) and
+    # --ignore-scripts: no lifecycle scripts. On Linux two packages have one, and nothing here needs
+    # them: esbuild (a faster command line; the API finds the binary in @esbuild/*) and
     # @vscode/vsce-sign (the signing tool).
+    # --allow-git=none: npm prepares a git dependency in its clone, where the .npmrc of that
+    # dependency can name a program to run, also with --ignore-scripts. None is in the lock file.
     - name: Install dependencies
       shell: bash
-      run: npm ci --ignore-scripts
+      run: npm ci --ignore-scripts --allow-git=none

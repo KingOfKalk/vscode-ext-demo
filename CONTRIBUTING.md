@@ -64,7 +64,7 @@ CI ([`ci.yml`](.github/workflows/ci.yml)) runs on every pull request and push to
 - `build`: `npm run package`, `npm run check:vsix`, the `.vsix` as an artifact for 14 days
 - `smoke`: `npm run test:smoke` with that artifact, in the VS Code version in `engines.vscode`
 
-All four are required. Each installs with `npm ci --ignore-scripts`, so a dependency must not need its lifecycle scripts. Run `npm run check` and `npm run test:smoke` locally first. CI does not build the dev container; after changing `.devcontainer/`, rebuild it to verify.
+All four are required. Each installs with `npm ci --ignore-scripts --allow-git=none`, so a dependency must not need its lifecycle scripts or come from git. Run `npm run check` and `npm run test:smoke` locally first. CI does not build the dev container; after changing `.devcontainer/`, rebuild it to verify.
 
 ## Releases
 

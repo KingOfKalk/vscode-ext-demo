@@ -16,12 +16,12 @@ defaults:
     shell: bash -euo pipefail {0}
 
 # release-please -> find-release -> (the latest release has no .vsix) package -> publish.
-# npm runs only in `package`, with a read-only token. Only `publish` can write to the release, and
-# it runs no code from the repository or from npm.
+# `npm ci` runs only in `package`, with a read-only token. Only `publish` can write to the release,
+# and it runs no code from the repository or from npm.
 #
 # `package` must not run the tools that Dependabot auto-merges (eslint, vitest, …), which could
-# change the .vsix before the upload. So it has no `npm run check` (the required checks passed on the
-# same tree) and calls the scripts with the `node` of setup-node: `npm run` and `npx` put the
+# change the .vsix before the upload. So it has no `npm run check` (the required checks passed on
+# the same tree) and calls the scripts with the `node` of setup-node: `npm run` and `npx` put the
 # commands of all installed packages first on PATH, and one of them could be called `node`.
 jobs:
   release-please:

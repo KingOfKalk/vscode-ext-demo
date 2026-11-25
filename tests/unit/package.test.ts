@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -47,7 +48,7 @@ describe('package.mjs', () => {
   }
 
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), 'package-'));
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'package-')));
     mkdirSync(join(root, 'scripts'));
     copyFileSync(join(REPOSITORY, 'scripts/package.mjs'), join(root, 'scripts/package.mjs'));
     write('esbuild.mjs', STEP);
@@ -118,6 +119,16 @@ describe('package.mjs', () => {
       bin: { vsce: string };
     };
     expect(existsSync(join(REPOSITORY, 'node_modules/@vscode/vsce', manifest.bin.vsce))).toBe(true);
+  });
+});
+
+describe('setup action', () => {
+  const action = readFileSync(join(REPOSITORY, '.github/actions/setup/action.yml'), 'utf8');
+
+  // --ignore-scripts alone does not cover git dependencies.
+  it('installs without lifecycle scripts and without git dependencies', () => {
+    const commands = [...action.matchAll(/^ *run: (.*)$/gm)].map((match) => match[1]);
+    expect(commands).toEqual(['npm ci --ignore-scripts --allow-git=none']);
   });
 });
 
