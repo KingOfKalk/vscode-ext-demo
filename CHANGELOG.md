@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.1...v0.2.2) (2026-11-26)
+
+
+### Documentation
+
+* **agents:** use break well and test with the user's trigger ([#30](https://github.com/KingOfKalk/vscode-ext-demo/issues/30)) ([50c1dd2](https://github.com/KingOfKalk/vscode-ext-demo/commit/50c1dd2ba4247a72ae858973d90f7b779c83d068))
+
 ## [0.2.1](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.0...v0.2.1) (2026-11-26)
 
 
