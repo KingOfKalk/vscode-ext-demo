@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.2...v0.2.3) (2026-11-26)
+
+
+### Tests
+
+* **smoke:** check that the window is restored and the count is saved after a restart ([#33](https://github.com/KingOfKalk/vscode-ext-demo/issues/33)) ([d1987d0](https://github.com/KingOfKalk/vscode-ext-demo/commit/d1987d031f62d9c66c1f59ba6a5e0462bfc0e467))
+
 ## [0.2.2](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.1...v0.2.2) (2026-11-26)
 
 
