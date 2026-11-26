@@ -2,7 +2,7 @@
   "name": "vscode-ext-demo",
   "displayName": "VS Code Extension Demo",
   "description": "A proof of concept on how to develop an extension for VS Code.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "kingofkalk",
   "private": true,
   "license": "MIT",
