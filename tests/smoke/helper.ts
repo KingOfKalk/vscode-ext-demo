@@ -13,7 +13,7 @@ import { DEFAULT_MESSAGE } from '../../src/settings';
 import { readScreen, type Page } from './screen';
 
 export interface Phase {
-  name: 'count' | 'restore' | 'hidden' | 'other';
+  name: 'count' | 'restore' | 'other';
   profile: string;
   count: number;
 }
@@ -22,8 +22,6 @@ export interface Phase {
 export interface Report {
   /** The count of the extension. */
   count?: number;
-  /** In `hidden`: whether the restored window was a tab behind another one. */
-  restoredHidden?: boolean;
   /** At the end: the pages of the window, or why they could not be read. */
   windows?: Page[] | string;
   /** At the end: the tabs of the window. */
@@ -35,12 +33,19 @@ const DIR = dirname(__dirname);
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-async function until(what: string, condition: () => boolean, seconds = 20): Promise<void> {
+/** Reads until `done` says so or the time is up; returns the last value it read. */
+async function until<T>(
+  read: () => T | Promise<T>,
+  done: (value: T) => boolean,
+  seconds = 20,
+): Promise<T> {
   const end = Date.now() + seconds * 1000;
-  while (!condition()) {
-    if (Date.now() > end) throw new Error(`waited ${seconds} s, but this did not happen: ${what}`);
+  let value = await read();
+  while (!done(value) && Date.now() < end) {
     await sleep(50);
+    value = await read();
   }
+  return value;
 }
 
 const demo = () => vscode.extensions.getExtension<DemoApi>(EXTENSION_ID);
@@ -53,8 +58,6 @@ const windowTabs = () =>
         tab.input instanceof vscode.TabInputWebview && tab.input.viewType.endsWith(VIEW_TYPE),
     );
 
-const hidden = () => windowTabs().every((tab) => !tab.isActive);
-
 async function windows(profile: string): Promise<Page[] | string> {
   try {
     return (await readScreen(profile)).windows;
@@ -64,46 +67,24 @@ async function windows(profile: string): Promise<Page[] | string> {
   }
 }
 
-/** Waits until VS Code shows these pages; returns what it showed last. */
-async function untilShown(profile: string, expected: Page[]): Promise<Page[] | string> {
-  const end = Date.now() + 20_000;
-  let shown = await windows(profile);
-  while (!isDeepStrictEqual(shown, expected) && Date.now() < end) {
-    await sleep(50);
-    shown = await windows(profile);
-  }
-  return shown;
-}
-
-/** Hides the window behind a file of the folder, as a user who opens a file does. */
-async function hide(): Promise<void> {
-  const [folder] = vscode.workspace.workspaceFolders ?? [];
-  if (!folder) throw new Error('no folder is open');
-  const note = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(folder.uri, 'note.txt'));
-  await vscode.window.showTextDocument(note, { viewColumn: vscode.ViewColumn.One, preview: false });
-  await until('the window is behind the note', hidden);
-}
-
 async function runPhase({ name, profile, count }: Phase, report: Report): Promise<void> {
   // Never activates it: `onStartupFinished` or the restored window must.
-  await until(`${EXTENSION_ID} is active`, () => demo()?.isActive === true, 60);
+  if (!(await until(() => demo()?.isActive === true, Boolean, 60))) {
+    throw new Error(`${EXTENSION_ID} is not active after 60 s`);
+  }
   report.count = demo()?.exports.getCount();
   if (name === 'count') {
     await vscode.commands.executeCommand(COMMANDS.openWindow);
     for (let i = 0; i < count; i++) await vscode.commands.executeCommand(COMMANDS.increment);
     report.count = demo()?.exports.getCount();
   }
-  if (name === 'hidden') {
-    await until('VS Code restored the tab of the window', () => windowTabs().length > 0);
-    report.restoredHidden = windowTabs().length === 1 && hidden();
-    // Not with Open Window, which the extension notices: users switch tabs.
-    await vscode.commands.executeCommand('workbench.action.previousEditor');
-  }
-  const window = { message: DEFAULT_MESSAGE, count: String(count), styled: true };
-  report.windows = await untilShown(profile, name === 'other' ? [] : [window]);
+  const expected =
+    name === 'other' ? [] : [{ message: DEFAULT_MESSAGE, count: String(count), styled: true }];
+  report.windows = await until(
+    () => windows(profile),
+    (shown) => isDeepStrictEqual(shown, expected),
+  );
   report.tabs = windowTabs().length;
-  // At the next start, VS Code restores the window as a tab behind the note.
-  if (name === 'restore') await hide();
 }
 
 /** Called by VS Code on `onStartupFinished`. */

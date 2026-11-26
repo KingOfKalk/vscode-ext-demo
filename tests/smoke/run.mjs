@@ -11,7 +11,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -86,6 +85,7 @@ function runVscode(command, args, env, timeoutMs = TIMEOUT_MS) {
       clearTimeout(timer);
       // Its zygote and utility processes must not outlive it: the next start uses the profile.
       killGroup(vscode.pid);
+      children.delete(vscode);
       resolve({ ending: signal ?? `exit ${String(code)}`, output });
     });
   });
@@ -138,15 +138,6 @@ async function bundle(source, extension, to, outfile) {
 }
 
 /**
- * The directories in `logs/` of a profile, one per start.
- * @param {string} profile
- */
-function logStarts(profile) {
-  const logs = join(profile, 'logs');
-  return existsSync(logs) ? readdirSync(logs) : [];
-}
-
-/**
  * @typedef {{ executable: string, extensions: string, env: NodeJS.ProcessEnv }} Setup
  *   what both stages use: VS Code, the installed .vsix, the environment with the display
  */
@@ -193,11 +184,12 @@ async function suiteStage(dir, { executable, extensions, env }) {
     ...problems(demoLog).map((entry) => `Demo log: ${entry}`),
     ...hostProblems(hostLog).map((entry) => `Extension host log: ${entry}`),
   ];
+  /** @type {[string, string][]} */
   const logs = [
-    ['Demo log', demoLog],
-    ['Extension host log', hostLog],
-    ['Window log', readLog(profile, LOGS.renderer)],
-    ['Output of VS Code', output],
+    ['Demo log of the suite', demoLog],
+    ['Extension host log of the suite', hostLog],
+    ['Window log of the suite', readLog(profile, LOGS.renderer)],
+    ['Output of VS Code in the suite', output],
   ];
   return { results, outside, logs };
 }
@@ -207,7 +199,6 @@ async function suiteStage(dir, { executable, extensions, env }) {
  * @param {string} dir
  * @param {Setup} setup
  * @param {string} message the default greeting
- * @returns {Promise<CheckResult[]>}
  */
 async function restartStage(dir, { executable, extensions, env }, message) {
   const profile = join(dir, 'profile');
@@ -215,21 +206,24 @@ async function restartStage(dir, { executable, extensions, env }, message) {
   // With "always", VS Code would ask before the helper quits it.
   makeProfile(profile, { 'window.confirmBeforeClose': 'never' });
   for (const folder of ['a', 'b']) mkdirSync(join(dir, folder));
-  writeFileSync(join(dir, 'a', 'note.txt'), 'A file to open in front of the Demo window.\n');
   await bundle('helper.ts', 'helper', helper, 'helper.js');
 
   /** @type {CheckResult[]} */
   const results = [];
+  /** @type {[string, string][]} */
+  const logs = [];
   for (const { name, folder, title } of PHASES) {
     writeFileSync(join(helper, 'phase.json'), JSON.stringify({ name, profile, count: COUNT }));
     // screen.ts must not find the port of the last start.
     rmSync(join(profile, 'DevToolsActivePort'), { force: true });
-    const before = logStarts(profile);
-    const { ending } = await runVscode(
+    // The logs of this start only, laid out as in a profile for readLog.
+    const logsOf = join(dir, `logs-${name}`);
+    const { ending, output } = await runVscode(
       executable,
       [
         ...vscodeFlags(profile, extensions),
         ...QUIET_FLAGS,
+        `--logsPath=${join(logsOf, 'logs', 'start')}`,
         '--remote-debugging-port=0',
         `--extensionDevelopmentPath=${helper}`,
         join(dir, folder),
@@ -237,24 +231,22 @@ async function restartStage(dir, { executable, extensions, env }, message) {
       env,
       START_TIMEOUT_MS,
     );
-    const start = logStarts(profile).find((entry) => !before.includes(entry)) ?? 'none';
-    const failures = checkStart(
-      name,
-      {
-        ending,
-        report: readJson(join(dir, `${name}.json`)),
-        demoLog: readLog(profile, LOGS.demo, start),
-        hostLog: readLog(profile, LOGS.host, start),
-      },
-      message,
-    );
-    results.push(
-      failures.length === 0
-        ? { name: title, status: 'passed' }
-        : { name: title, status: 'failed', error: failures.join('\n') },
+    const demoLog = readLog(logsOf, LOGS.demo);
+    const hostLog = readLog(logsOf, LOGS.host);
+    const report = readJson(join(dir, `${name}.json`));
+    const failures = checkStart(name, { ending, report, demoLog, hostLog }, message);
+    if (failures.length === 0) {
+      results.push({ name: title, status: 'passed' });
+      continue;
+    }
+    results.push({ name: title, status: 'failed', error: failures.join('\n') });
+    logs.push(
+      [`Demo log of ${name}`, demoLog],
+      [`Extension host log of ${name}`, hostLog],
+      [`Output of VS Code in ${name}`, output],
     );
   }
-  return results;
+  return { results, logs };
 }
 
 /** @param {readonly CheckResult[]} results */
@@ -264,9 +256,6 @@ function print(results) {
     if (error !== undefined) console.log(error.replace(/^/gm, '        '));
   }
 }
-
-/** @param {number} ms */
-const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
 
 /** @param {readonly CheckResult[]} results */
 const failed = (results) => results.some(({ status }) => status !== 'passed');
@@ -305,29 +294,35 @@ async function main() {
   const suite = await suiteStage(dir, setup);
   print(suite.results);
   for (const line of suite.outside) console.error(line);
-  const restartTime = Date.now();
-  console.log(`Suite: ${seconds(restartTime - startTime)}`);
   console.log('Restart stage: normal starts of VS Code on one profile');
   const message = manifest.contributes.configuration.properties['vscodeExtDemo.message'].default;
-  const restart = await restartStage(join(dir, 'restart'), setup, message);
-  print(restart);
-  console.log(`Restart stage: ${seconds(Date.now() - restartTime)}`);
+  /** @type {{ results: CheckResult[], logs: [string, string][] }} */
+  let restart;
+  try {
+    restart = await restartStage(join(dir, 'restart'), setup, message);
+  } catch (error) {
+    // The results of the suite still go into the report.
+    const failure = describeFailure(error);
+    restart = {
+      results: [{ name: 'the restart stage', status: 'failed', error: failure }],
+      logs: [],
+    };
+  }
+  print(restart.results);
 
   if (values.report !== undefined) {
     const stages = [
       { file: 'tests/smoke/suite.ts', results: suite.results, message: suite.outside.join('\n') },
-      { file: 'tests/smoke/restart.mjs', results: restart, message: '' },
+      { file: 'tests/smoke/restart.mjs', results: restart.results, message: '' },
     ];
     writeFileSync(values.report, JSON.stringify(toReport(stages, startTime, Date.now())));
   }
 
   const suiteFailed = failed(suite.results) || suite.outside.length > 0;
-  if (suiteFailed) {
-    for (const [name, text] of suite.logs) {
-      console.error(`\n--- End of: ${name} of the suite ---\n${tail(text)}`);
-    }
+  for (const [name, text] of [...(suiteFailed ? suite.logs : []), ...restart.logs]) {
+    console.error(`\n--- End of: ${name} ---\n${tail(text)}`);
   }
-  if (suiteFailed || failed(restart)) {
+  if (suiteFailed || failed(restart.results)) {
     console.error(`\nThe smoke tests failed. All files: ${dir}`);
     return 1;
   }

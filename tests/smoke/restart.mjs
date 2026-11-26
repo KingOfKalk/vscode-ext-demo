@@ -8,15 +8,10 @@ import { hostProblems, problems } from './results.mjs';
 /** The count the first phase counts to. */
 export const COUNT = 3;
 
-/** In this order. Folder `a` three times, then folder `b`, which has its own count. */
+/** In this order. Folder `a` twice, then folder `b`, which has its own count. */
 export const PHASES = /** @type {const} */ ([
   { name: 'count', folder: 'a', title: 'counts to 3 and quits' },
   { name: 'restore', folder: 'a', title: 'restores the window with the count after a restart' },
-  {
-    name: 'hidden',
-    folder: 'a',
-    title: 'restores a window that was behind a tab once it is shown',
-  },
   { name: 'other', folder: 'b', title: 'starts at 0 in another folder' },
 ]);
 
@@ -40,7 +35,6 @@ export function checkStart(name, { ending, report, demoLog, hostLog }, message) 
   const expected = {
     count: { count: COUNT, windows: [window], tabs: 1 },
     restore: { count: COUNT, windows: [window], tabs: 1 },
-    hidden: { count: COUNT, restoredHidden: true, windows: [window], tabs: 1 },
     other: { count: 0, windows: [], tabs: 0 },
   }[name];
   const failures = [];

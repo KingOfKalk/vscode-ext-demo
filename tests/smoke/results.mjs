@@ -6,22 +6,21 @@ import { join } from 'node:path';
  * @typedef {{ name: string, status: 'pending' | 'running' | 'passed' | 'failed', error?: string }} CheckResult
  */
 
-/** Below the directory of a start in `logs/` of the profile; VS Code makes one per start. */
+/** Below `logs/` of the profile; VS Code starts a new directory per run. */
 export const LOGS = {
-  demo: 'window1/exthost/kingofkalk.vscode-ext-demo/Demo.log',
-  host: 'window1/exthost/exthost.log',
-  renderer: 'window1/renderer.log',
+  demo: '*/window1/exthost/kingofkalk.vscode-ext-demo/Demo.log',
+  host: '*/window1/exthost/exthost.log',
+  renderer: '*/window1/renderer.log',
 };
 
 /**
  * The text of a log, or '' if it does not exist (yet).
  * @param {string} profile
  * @param {string} pattern one of `LOGS`
- * @param {string} [start] the directory of one start in `logs/`; all starts if not given
  */
-export function readLog(profile, pattern, start = '*') {
+export function readLog(profile, pattern) {
   const cwd = join(profile, 'logs');
-  return globSync(`${start}/${pattern}`, { cwd })
+  return globSync(pattern, { cwd })
     .map((file) => readFileSync(join(cwd, file), 'utf8'))
     .join('');
 }

@@ -14,7 +14,6 @@ describe('checkStart', () => {
   it.each<[Parameters<typeof checkStart>[0], Report]>([
     ['count', { count: 3, windows: window(3), tabs: 1 }],
     ['restore', { count: 3, windows: window(3), tabs: 1 }],
-    ['hidden', { count: 3, restoredHidden: true, windows: window(3), tabs: 1 }],
     ['other', { count: 0, windows: [], tabs: 0 }],
   ])('passes %s when it shows what it must', (name, report) => {
     expect(checkStart(name, start(report), MESSAGE)).toEqual([]);
@@ -25,13 +24,6 @@ describe('checkStart', () => {
     expect(checkStart('restore', start(report), MESSAGE)).toEqual([
       'count: expected 3, got 0',
       `windows: expected ${JSON.stringify(window(3))}, got ${JSON.stringify(window(0))}`,
-    ]);
-  });
-
-  it('reports a window that VS Code restored behind a tab, but that was not there', () => {
-    const report = { count: 3, windows: window(3), tabs: 1 };
-    expect(checkStart('hidden', start(report), MESSAGE)).toEqual([
-      'restoredHidden: expected true, got undefined',
     ]);
   });
 

@@ -36,19 +36,6 @@ describe('readLog', () => {
     expect(readLog(profile, LOGS.host)).toBe('text\n');
     expect(readLog(profile, LOGS.demo)).toBe('');
   });
-
-  it('reads all starts, or one', () => {
-    for (const [start, text] of [
-      ['20261124T221540', 'first\n'],
-      ['20261124T221545', 'second\n'],
-    ] as const) {
-      const dir = join(profile, 'logs', start, 'window1/exthost');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, 'exthost.log'), text);
-    }
-    expect(readLog(profile, LOGS.host).split('\n').sort()).toEqual(['', 'first', 'second']);
-    expect(readLog(profile, LOGS.host, '20261124T221545')).toBe('second\n');
-  });
 });
 
 describe('problems', () => {
