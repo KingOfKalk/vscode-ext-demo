@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.4](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.3...v0.2.4) (2026-11-26)
+
+
+### Bug Fixes
+
+* **live:** remove a breakpoint that is still on its way before continuing ([#40](https://github.com/KingOfKalk/vscode-ext-demo/issues/40)) ([9e2fd9f](https://github.com/KingOfKalk/vscode-ext-demo/commit/9e2fd9f666f716cdedf90038d223f76765f75494))
+
+
+### Documentation
+
+* **readme:** show how to demo the agent loop ([#37](https://github.com/KingOfKalk/vscode-ext-demo/issues/37)) ([84031c7](https://github.com/KingOfKalk/vscode-ext-demo/commit/84031c76af05b323d410e1c9f91d2db64657e37f))
+
 ## [0.2.3](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.2...v0.2.3) (2026-11-26)
 
 
