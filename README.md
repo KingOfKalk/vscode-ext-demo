@@ -4,6 +4,22 @@ A small VS Code extension (`kingofkalk.vscode-ext-demo`) built to find out how w
 
 It is not published to the VS Code Marketplace or Open VSX, and never will be. Install it from a `.vsix`.
 
+## Show the agent loop
+
+1. Open the repository in the dev container and give an agent a task, e.g. an issue. It reads [AGENTS.md](AGENTS.md).
+2. The agent changes the code and runs `npm run check` (format, lint, types, unit tests, build).
+3. It runs `npm run test:smoke`: the packaged `.vsix` in a real VS Code, which reads what a user sees (window, sidebar, status bar) and then restarts VS Code to check that the window and the count come back. Nothing is clicked.
+4. For anything visible it starts the live session (`npm run live -- start`) and clicks through a real VS Code. Open the `noVNC:` URL it prints to watch.
+5. It opens a pull request. CI runs `lint`, `test`, `build` and `smoke`; a person reviews and merges.
+
+What agents did with it so far, each on its own, without help:
+
+| Trial | Agent | Task | Result |
+| ----- | ----- | ---- | ------ |
+| [#6](https://github.com/KingOfKalk/vscode-ext-demo/issues/6) | Claude Code | add a command and a window button | done in 7 min |
+| [#18](https://github.com/KingOfKalk/vscode-ext-demo/issues/18) | Claude Code, 3 runs | find and fix a bug from a user report, blind | 3 of 3 fixed, in 7, 7 and 10 min |
+| [#35](https://github.com/KingOfKalk/vscode-ext-demo/issues/35) | Mistral Vibe | add a command and a window button | done in 7 min |
+
 ## Install
 
 1. Download `vscode-ext-demo-<version>.vsix` from the [latest release](https://github.com/KingOfKalk/vscode-ext-demo/releases/latest). If there is no release yet, build it yourself (see below).
