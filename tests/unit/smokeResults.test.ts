@@ -36,6 +36,19 @@ describe('readLog', () => {
     expect(readLog(profile, LOGS.host)).toBe('text\n');
     expect(readLog(profile, LOGS.demo)).toBe('');
   });
+
+  it('reads all starts, or one', () => {
+    for (const [start, text] of [
+      ['20261124T221540', 'first\n'],
+      ['20261124T221545', 'second\n'],
+    ] as const) {
+      const dir = join(profile, 'logs', start, 'window1/exthost');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'exthost.log'), text);
+    }
+    expect(readLog(profile, LOGS.host).split('\n').sort()).toEqual(['', 'first', 'second']);
+    expect(readLog(profile, LOGS.host, '20261124T221545')).toBe('second\n');
+  });
 });
 
 describe('problems', () => {
@@ -97,6 +110,11 @@ describe('hostProblems', () => {
 });
 
 describe('toReport', () => {
+  const suite = (results: CheckResult[], message = '') => ({
+    file: 'tests/smoke/suite.ts',
+    results,
+    message,
+  });
   const results: CheckResult[] = [
     { name: 'a works', status: 'passed' },
     { name: 'b works', status: 'failed', error: 'AssertionError: nope' },
@@ -105,7 +123,8 @@ describe('toReport', () => {
   ];
 
   it('is a report that ci-summary.mjs renders', () => {
-    const out = renderTestSummary(toReport(results, '', 1000, 3500), '/repo', 'failure', 'Smoke');
+    const report = toReport([suite(results)], 1000, 3500);
+    const out = renderTestSummary(report, '/repo', 'failure', 'Smoke');
     expect(out).toContain('## Smoke\n');
     expect(out).toContain('| Passed | 1 |');
     expect(out).toContain('| Failed | 2 |');
@@ -118,14 +137,32 @@ describe('toReport', () => {
   });
 
   it('has a problem outside the checks', () => {
-    const report = toReport([{ name: 'a works', status: 'passed' }], 'VS Code ended', 0, 1);
+    const report = toReport(
+      [suite([{ name: 'a works', status: 'passed' }], 'VS Code ended')],
+      0,
+      1,
+    );
     const out = renderTestSummary(report, '/repo', 'failure');
     expect(out).toContain('#### tests/smoke/suite.ts\n\n```text\nVS Code ended\n```');
   });
 
   it('has no failures if all is well', () => {
-    const report = toReport([{ name: 'a works', status: 'passed' }], '', 0, 1);
+    const report = toReport([suite([{ name: 'a works', status: 'passed' }])], 0, 1);
     expect(report.testResults[0]?.status).toBe('passed');
     expect(renderTestSummary(report, '/repo', 'success')).not.toContain('Failed tests');
+  });
+
+  it('counts the checks of all stages and names the stage of a failure', () => {
+    const restart = {
+      file: 'tests/smoke/restart.mjs',
+      results: [{ name: 'restores', status: 'failed', error: 'count: expected 3, got 0' } as const],
+      message: '',
+    };
+    const report = toReport([suite([{ name: 'a works', status: 'passed' }]), restart], 0, 1);
+    expect(report.testResults.map(({ status }) => status)).toEqual(['passed', 'failed']);
+    const out = renderTestSummary(report, '/repo', 'failure');
+    expect(out).toContain('| Passed | 1 |');
+    expect(out).toContain('| Failed | 1 |');
+    expect(out).toContain('#### tests/smoke/restart.mjs › restores\n\n```text\ncount: expected 3');
   });
 });
