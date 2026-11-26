@@ -24,7 +24,10 @@ export interface PauseRequest {
   /** For `look`. */
   lookTimeoutMs: number;
   triggerTimeoutMs: number;
-  /** How long the process may take to continue and to say so. */
+  /**
+   * How long the process may take to continue and to say so. Twice as long if the ID of the
+   * breakpoint is still on its way: it is waited for first.
+   */
   cleanupMs?: number;
   signal: AbortSignal;
   /** V8 says where the breakpoint is: the next place at which it can stop. */
