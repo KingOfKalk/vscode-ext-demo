@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.1](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.2.0...v0.2.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* **window:** do not repeat the unchanged count to screen readers ([#26](https://github.com/KingOfKalk/vscode-ext-demo/issues/26)) ([ca2d394](https://github.com/KingOfKalk/vscode-ext-demo/commit/ca2d39456b18f53c6acc593911759c772474c8cb))
+* work in untrusted folders ([#27](https://github.com/KingOfKalk/vscode-ext-demo/issues/27)) ([e119f30](https://github.com/KingOfKalk/vscode-ext-demo/commit/e119f3011c8653397cd1d073f91bb8c4912dc476))
+
+
+### Tests
+
+* **smoke:** read the window, the sidebar and the status bar ([#28](https://github.com/KingOfKalk/vscode-ext-demo/issues/28)) ([afd473c](https://github.com/KingOfKalk/vscode-ext-demo/commit/afd473cff8b34c3374ada77eff73cfa019796cbf))
+
+
+### Continuous Integration
+
+* **release:** run no auto-merged dev dependency in the package job ([#25](https://github.com/KingOfKalk/vscode-ext-demo/issues/25)) ([8ab1abd](https://github.com/KingOfKalk/vscode-ext-demo/commit/8ab1abdeca797e0afe60b381dfa2e025999d021b))
+
 ## [0.2.0](https://github.com/KingOfKalk/vscode-ext-demo/compare/v0.1.0...v0.2.0) (2026-11-25)
 
 
