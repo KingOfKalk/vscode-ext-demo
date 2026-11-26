@@ -32,6 +32,8 @@ Guidance for any coding agent working in this repository. [CONTRIBUTING.md](CONT
 
 Green unit tests do not prove that the extension starts; the smoke tests do.
 
+A bug fix comes with a test that fails without the fix and triggers the bug the way the user did, e.g. by switching tabs instead of running Open Window. Try it against a plausible wrong fix too: if that passes, the test proves little.
+
 ## Add a command
 
 Take `decrement` (commit 4ee9313) as the model. A command touches:
@@ -49,13 +51,13 @@ Take `decrement` (commit 4ee9313) as the model. A command touches:
 For anything visible or interactive: a real VS Code in a virtual display, driven by `npm run live -- <command>` (plain text, exit 1 on failure). One session per machine or container, and a checkout cannot use the session of another: `stop` when done. The VS Code download is the one of the smoke tests. Outside the dev container run `scripts/install-system-deps.sh --live` once.
 
 - `start [--keep]`: build, install into a fresh profile, start, print the noVNC URL; `--keep` keeps profile and count. `stop`, `status`.
-- `reload`: after every code change. Rebuilds, reinstalls, reloads the window, keeps the profile.
+- `reload`: after every code change. Rebuilds, reinstalls, reloads the window, keeps the profile. VS Code restores the window as after a restart; to try saving the count, `stop` and `start --keep`.
 - `snapshot`: the UI as text, with the names `click` takes. Look first. `screenshot [name]` writes a PNG to `.vscode-live/`; read it only if the text does not tell.
 - `click <target>`, `type <text>`, `key <combo>`, `command <title>`: act like a user, e.g. `command "Demo: Open Window"`, `key Control+Shift+P` (Playwright key names; `Ctrl` fails). A target is an accessible name, `role=<role>:<name>` or `css=<selector>`; an error lists what exists.
 - `set <setting> <json>`: change a setting, e.g. `set vscodeExtDemo.step 5`.
 - `logs [--lines N]`: `Demo` channel, extension host log, webview console errors. Run it after anything surprising.
 - `eval <expr>`: evaluate in the extension host without pausing it.
-- `break <file:line> [--do <live command>] [--eval <expr>…]`: stop at a TypeScript line while `--do` runs, print stack, locals and the expressions, continue.
+- `break <file:line> [--do <live command>] [--eval <expr>…]`: stop at a TypeScript line while `--do` runs, print stack, locals and the expressions, continue. `--do` takes the whole live command as one argument, so quote it: `break src/demoWindow.ts:<line> --do 'command "Demo: Open Window"' --eval panel.viewColumn`. Take the line from the file (`grep -n`); a line that never runs ends only after a timeout. One stop with several `--eval` (a stored value next to the live one) usually tells more than many `eval` calls.
 - Loop: edit, `reload`, `snapshot`, act, `snapshot`, `logs`. The PR says in text what was tried and seen; never upload screenshots.
 - Output has local paths: shorten them before pasting into a PR or issue of this public repo. `eval process.env` prints the session environment: never paste it.
 - `break` and `eval` can freeze the window (native code, a timer loop, a killed command). Way out: `npm run live -- stop`, then `start --keep`.
