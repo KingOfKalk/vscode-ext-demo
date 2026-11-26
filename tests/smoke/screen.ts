@@ -48,12 +48,16 @@ const WINDOW = `(() => {
     return element?.checkVisibility({ visibilityProperty: true }) ? element.textContent : '';
   };
   const sheet = page?.querySelector('link[rel="stylesheet"]')?.sheet;
-  // A missing or blocked file leaves an empty sheet.
-  const styled = sheet != null && sheet.cssRules.length > 0;
+  let styled = false;
+  try {
+    // An empty file has no rules; the rules of a missing or blocked file cannot be read.
+    styled = sheet != null && sheet.cssRules.length > 0;
+  } catch {}
   return { message: text('message'), count: text('count'), styled };
 })()`;
 
 interface Answer {
+  error?: { message: string };
   result?: {
     result?: { value?: unknown };
     exceptionDetails?: { text: string; exception?: { description?: string } };
@@ -76,7 +80,8 @@ async function evaluate(target: Target, expression: string): Promise<unknown> {
         reject(new Error('the connection to VS Code was lost'));
       };
     });
-    const { result } = JSON.parse(answer) as Answer;
+    const { error, result } = JSON.parse(answer) as Answer;
+    if (error) throw new Error(error.message);
     const thrown = result?.exceptionDetails;
     if (thrown) throw new Error(thrown.exception?.description ?? thrown.text);
     return result?.result?.value;
