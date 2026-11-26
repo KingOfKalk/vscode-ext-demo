@@ -81,6 +81,7 @@ export class VsCodeWindowHost implements WindowHost {
     const { webview } = panel;
     return {
       reveal: () => {
+        // No column: it stays in its group. The `viewColumn` of a restored panel is wrong at first.
         panel.reveal();
       },
       dispose: () => {

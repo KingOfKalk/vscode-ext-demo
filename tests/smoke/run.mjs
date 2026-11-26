@@ -145,6 +145,8 @@ async function main() {
     [
       ...flags,
       ...QUIET_FLAGS,
+      // A free port of this machine, for screen.ts.
+      '--remote-debugging-port=0',
       `--extensionDevelopmentPath=${driver}`,
       `--extensionTestsPath=${suite}`,
       workspace,

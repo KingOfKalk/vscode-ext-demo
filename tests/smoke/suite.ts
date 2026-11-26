@@ -3,10 +3,14 @@
 import assert from 'node:assert/strict';
 import { renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import * as vscode from 'vscode';
+import { VsCodeWindowHost } from '../../src/demoWindow';
 import type { DemoApi } from '../../src/extension';
-import { COMMANDS, CONFIG_SECTION, EXTENSION_ID, VIEW_TYPE } from '../../src/ids';
+import { COMMANDS, CONFIG_SECTION, EXTENSION_ID, VIEW_ID, VIEW_TYPE } from '../../src/ids';
+import { DEFAULT_MESSAGE } from '../../src/settings';
 import { LOGS, problems, readLog, type CheckResult } from './results.mjs';
+import { readScreen, type Page, type Screen } from './screen';
 
 /** The suite is in `driver/` of the directory that run.mjs made for this run. */
 const DIR = dirname(__dirname);
@@ -86,6 +90,35 @@ async function setSetting(key: string, value: unknown): Promise<void> {
   await until(`the setting ${key} is ${JSON.stringify(value)}`, () => read() === value);
 }
 
+/** Waits until VS Code shows this. */
+async function untilShown(expected: Partial<Screen>): Promise<void> {
+  const keys = Object.keys(expected) as (keyof Screen)[];
+  const end = Date.now() + 15_000;
+  let shown: unknown;
+  do {
+    try {
+      const screen = await within(5, 'reading the screen', readScreen(PROFILE));
+      shown = Object.fromEntries(keys.map((key) => [key, screen[key]]));
+      if (isDeepStrictEqual(shown, expected)) return;
+    } catch (error) {
+      // A page that comes or goes cannot be read.
+      shown = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(50);
+  } while (Date.now() < end);
+  assert.deepEqual(shown, expected);
+}
+
+/** The only window, with its style sheet. */
+const windowWith = (message: string, count: number): { windows: Page[] } => ({
+  windows: [{ message, count: String(count), styled: true }],
+});
+
+async function focusNote(): Promise<void> {
+  const note = await vscode.workspace.openTextDocument(NOTE);
+  await vscode.window.showTextDocument(note, { viewColumn: vscode.ViewColumn.One, preview: false });
+}
+
 /** Later checks start without editors, with default settings and the count 0. */
 async function prepare(): Promise<void> {
   await vscode.commands.executeCommand('notifications.clearAll');
@@ -125,8 +158,7 @@ async function oneWindow(): Promise<void> {
 }
 
 async function openLocation(): Promise<void> {
-  const note = await vscode.workspace.openTextDocument(NOTE);
-  await vscode.window.showTextDocument(note, { viewColumn: vscode.ViewColumn.One, preview: false });
+  await focusNote();
   await execute(COMMANDS.openWindow);
   assert.equal((await onlyWindowTab()).group.viewColumn, vscode.ViewColumn.One);
 
@@ -136,9 +168,32 @@ async function openLocation(): Promise<void> {
   assert.equal(tab.group.viewColumn, vscode.ViewColumn.One, 'the open window moved');
 
   await closeTab(tab);
-  await vscode.window.showTextDocument(note, { viewColumn: vscode.ViewColumn.One });
+  await focusNote();
   await execute(COMMANDS.openWindow);
   assert.equal((await onlyWindowTab()).group.viewColumn, vscode.ViewColumn.Two);
+}
+
+/** An object with these members; every other one is a function that does nothing. */
+function fake<T extends object>(members: Partial<T>): T {
+  const get = (target: object, key: string | symbol): unknown =>
+    Reflect.get(target, key) ?? (() => undefined);
+  return new Proxy(members, { get }) as T;
+}
+
+/**
+ * VS Code says column 1 for a window that it restored, wherever it is. The suite cannot restore
+ * one, so a fake panel must do. This runs the code of `src/`, not of the .vsix.
+ */
+function revealAdopted(): Promise<void> {
+  const calls: unknown[][] = [];
+  const panel = fake<vscode.WebviewPanel>({
+    webview: fake<vscode.Webview>({}),
+    viewColumn: vscode.ViewColumn.One,
+    reveal: (column, preserveFocus = false) => void calls.push([column, preserveFocus]),
+  });
+  new VsCodeWindowHost(extension().extensionUri).adopt(panel).reveal();
+  assert.deepEqual(calls, [[undefined, false]], 'column and preserveFocus of reveal()');
+  return Promise.resolve();
 }
 
 async function pageRuns(): Promise<void> {
@@ -150,9 +205,62 @@ async function pageRuns(): Promise<void> {
   assert.equal(readyMessages(), before + 1, 'the page sent `ready` more than once');
 }
 
+/** Changes the count in every way and waits each time until it is shown. */
+async function untilCountsShown(screen: (count: number) => Partial<Screen>): Promise<void> {
+  await untilShown(screen(0));
+  await setSetting('step', 5);
+  for (const [command, count] of [
+    [COMMANDS.increment, 5],
+    [COMMANDS.increment, 10],
+    [COMMANDS.decrement, 5],
+    [COMMANDS.reset, 0],
+  ] as const) {
+    await execute(command);
+    await untilShown(screen(count));
+  }
+}
+
+async function windowShowsState(): Promise<void> {
+  await execute(COMMANDS.openWindow);
+  await untilCountsShown((count) => windowWith(DEFAULT_MESSAGE, count));
+  await setSetting('message', 'Changed <b>message</b>');
+  await untilShown(windowWith('Changed <b>message</b>', 0));
+}
+
+async function hiddenWindow(): Promise<void> {
+  await execute(COMMANDS.openWindow);
+  await untilShown(windowWith(DEFAULT_MESSAGE, 0));
+  await focusNote();
+  const hidden = () => windowTabs().every((tab) => !tab.isActive);
+  await until('the window is behind the note', hidden);
+  await setSetting('message', 'Changed while hidden');
+  await execute(COMMANDS.increment);
+  assert.ok(hidden(), 'the window came back on its own');
+  // Not with Open Window, which the extension notices: users switch tabs.
+  await execute('workbench.action.previousEditor');
+  await until('the window is back', () => !hidden());
+  await untilShown(windowWith('Changed while hidden', 1));
+}
+
+async function statusBar(): Promise<void> {
+  await untilCountsShown((count) => ({ statusBar: [`Demo: ${count}`] }));
+  assert.equal(extension().exports.statusBar.command, COMMANDS.openWindow);
+}
+
+async function sidebar(): Promise<void> {
+  await execute(`${VIEW_ID}.focus`);
+  await untilCountsShown((count) => ({
+    sidebar: ['Open window', 'Say hello', 'Show log', `Counter: ${count}`],
+  }));
+  const view = extension().exports.sidebar;
+  assert.deepEqual(
+    view.getChildren().map((row) => view.getTreeItem(row).command?.command),
+    [COMMANDS.openWindow, COMMANDS.sayHello, COMMANDS.showLog, undefined],
+  );
+}
+
 async function deadWindow(): Promise<void> {
-  const note = await vscode.workspace.openTextDocument(NOTE);
-  await vscode.window.showTextDocument(note, { viewColumn: vscode.ViewColumn.One, preview: false });
+  await focusNote();
   const before = readyMessages();
   const lines = demoLog().length;
   // The extension does not own it, like a window that is still there after a restart of the
@@ -221,7 +329,9 @@ async function decrement(): Promise<void> {
 }
 
 async function otherCommands(): Promise<void> {
+  await setSetting('message', 'Hello from the smoke test');
   await execute(COMMANDS.sayHello);
+  await untilShown({ notifications: ['Hello from the smoke test'] });
   await execute(COMMANDS.showLog);
   await until('the Demo log is visible', () =>
     vscode.window.visibleTextEditors.some(
@@ -238,6 +348,10 @@ async function otherCommands(): Promise<void> {
 async function settingsChange(): Promise<void> {
   const lines = demoLog().length;
   await setSetting('showStatusBar', false);
+  await untilShown({ statusBar: [] });
+  await setSetting('showStatusBar', true);
+  await untilShown({ statusBar: ['Demo: 0'] });
+  // The live session waits for this line.
   await until('the changed setting is in the Demo log', () =>
     /Settings changed: .*"showStatusBar":false/.test(demoLog().slice(lines)),
   );
@@ -246,10 +360,17 @@ async function settingsChange(): Promise<void> {
 
 const CHECKS: [name: string, check: () => Promise<void>][] = [
   ['is installed from the .vsix and activates on its own', activation],
+  // Before any setting changes: every change shows or hides the item again, so later the check
+  // could not see that the activation forgot to.
+  ['shows the count in the status bar', statusBar],
   ['registers all commands', commandsRegistered],
   ['opens one window, also for quick calls', oneWindow],
   ['opens the window where openLocation says', openLocation],
+  ['reveals an adopted panel without naming a column', revealAdopted],
   ['runs the page of the window', pageRuns],
+  ['shows the count and the message in the window', windowShowsState],
+  ['shows in the window what changed while it was hidden', hiddenWindow],
+  ['shows the rows and the count in the sidebar', sidebar],
   ['replaces a window that nobody owns', deadWindow],
   ['increments after the window was closed', incrementAfterClose],
   ['adds the step, limits it and resets', step],

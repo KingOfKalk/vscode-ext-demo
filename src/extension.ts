@@ -10,9 +10,12 @@ import { readSettings, type Settings } from './settings';
 import { StatusBar } from './statusBar';
 import { WindowController } from './windowController';
 
-/** What `activate()` returns; the smoke tests read the count through it. */
+/** What `activate()` returns: only for the smoke tests, not an API for other extensions. */
 export interface DemoApi {
   getCount(): number;
+  /** For the commands that a click runs: VS Code shows the rest, but not these. */
+  readonly sidebar: Pick<ActionsView, 'getChildren' | 'getTreeItem'>;
+  readonly statusBar: Pick<StatusBar, 'command'>;
 }
 
 export function activate(context: vscode.ExtensionContext): DemoApi {
@@ -98,5 +101,5 @@ export function activate(context: vscode.ExtensionContext): DemoApi {
 
   demoWindow.watch();
   log.info(`Extension activated, count ${store.count}`);
-  return { getCount: () => store.count };
+  return { getCount: () => store.count, sidebar: actionsView, statusBar };
 }
