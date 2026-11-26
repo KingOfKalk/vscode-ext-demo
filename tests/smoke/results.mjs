@@ -1,4 +1,4 @@
-// What the smoke suite (in the extension host) and the runner (outside) share.
+// What the smoke suite (in the extension host), the restart stage and the runner (outside) share.
 import { globSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -61,36 +61,41 @@ export function hostProblems(text) {
 }
 
 /**
- * The results in the shape of the Vitest JSON report, for scripts/ci-summary.mjs.
- * @param {readonly CheckResult[]} results
- * @param {string} message what went wrong outside the checks, or ''
+ * @typedef {{ file: string, results: readonly CheckResult[], message: string }} Stage
+ *   message: what went wrong outside the checks, or ''
+ */
+
+/**
+ * The results in the shape of the Vitest JSON report, for scripts/ci-summary.mjs: one file per
+ * stage of the smoke tests.
+ * @param {readonly Stage[]} stages
  * @param {number} startTime
  * @param {number} endTime
  */
-export function toReport(results, message, startTime, endTime) {
-  const count = (/** @type {CheckResult['status'][]} */ ...statuses) =>
-    results.filter(({ status }) => statuses.includes(status)).length;
-  const failed = count('failed', 'running');
+export function toReport(stages, startTime, endTime) {
+  const all = stages.flatMap(({ results }) => results);
+  const count = (
+    /** @type {readonly CheckResult[]} */ results,
+    /** @type {CheckResult['status'][]} */ ...statuses
+  ) => results.filter(({ status }) => statuses.includes(status)).length;
   return {
-    numTotalTests: results.length,
-    numPassedTests: count('passed'),
-    numFailedTests: failed,
-    numPendingTests: count('pending'),
+    numTotalTests: all.length,
+    numPassedTests: count(all, 'passed'),
+    numFailedTests: count(all, 'failed', 'running'),
+    numPendingTests: count(all, 'pending'),
     numTodoTests: 0,
     startTime,
-    testResults: [
-      {
-        name: 'tests/smoke/suite.ts',
-        status: failed > 0 || message !== '' ? 'failed' : 'passed',
-        startTime,
-        endTime,
-        message,
-        assertionResults: results.map(({ name, status, error }) => ({
-          fullName: name,
-          status: status === 'running' ? 'failed' : status,
-          failureMessages: status === 'running' ? ['did not finish'] : error ? [error] : [],
-        })),
-      },
-    ],
+    testResults: stages.map(({ file, results, message }) => ({
+      name: file,
+      status: count(results, 'failed', 'running') > 0 || message !== '' ? 'failed' : 'passed',
+      startTime,
+      endTime,
+      message,
+      assertionResults: results.map(({ name, status, error }) => ({
+        fullName: name,
+        status: status === 'running' ? 'failed' : status,
+        failureMessages: status === 'running' ? ['did not finish'] : error ? [error] : [],
+      })),
+    })),
   };
 }

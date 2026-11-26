@@ -1,0 +1,15 @@
+{
+  "name": "restart-helper",
+  "description": "The restart stage of the smoke tests: runs commands in a normal VS Code start.",
+  "version": "0.0.0",
+  "publisher": "kingofkalk",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.146.0"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./helper.js"
+}
