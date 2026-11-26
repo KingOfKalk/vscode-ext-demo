@@ -265,6 +265,9 @@ function print(results) {
   }
 }
 
+/** @param {number} ms */
+const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`;
+
 /** @param {readonly CheckResult[]} results */
 const failed = (results) => results.some(({ status }) => status !== 'passed');
 
@@ -302,10 +305,13 @@ async function main() {
   const suite = await suiteStage(dir, setup);
   print(suite.results);
   for (const line of suite.outside) console.error(line);
+  const restartTime = Date.now();
+  console.log(`Suite: ${seconds(restartTime - startTime)}`);
   console.log('Restart stage: normal starts of VS Code on one profile');
   const message = manifest.contributes.configuration.properties['vscodeExtDemo.message'].default;
   const restart = await restartStage(join(dir, 'restart'), setup, message);
   print(restart);
+  console.log(`Restart stage: ${seconds(Date.now() - restartTime)}`);
 
   if (values.report !== undefined) {
     const stages = [
