@@ -224,11 +224,52 @@ describe('pauseAt', () => {
     );
     expect(methods.slice(methods.indexOf('Debugger.setBreakpointByUrl') + 1)).toEqual([
       'Debugger.setBreakpointsActive',
+      'Debugger.removeBreakpoint',
       'Debugger.resume',
       'Debugger.disable',
       'Runtime.evaluate',
       'Runtime.awaitPromise',
     ]);
+    expect((await answer)[0]).toBe(2);
+    expect(await increment(child)).toBe(4);
+  });
+
+  it('leaves nothing if the breakpoint is hit right after the continue, also if another debugger is attached', async () => {
+    const { child, url } = await startChild();
+    // Its breakpoints stay active, and with them ours: `Debugger.setBreakpointsActive` does not stop it.
+    await (await connect(url)).send('Debugger.enable');
+    const inspector = await connect(url);
+    const abort = new AbortController();
+    const answer = once(child, 'message', { signal: AbortSignal.timeout(3000) });
+    // The line runs after the process took `Debugger.resume`, and before what comes after it.
+    let held: Promise<unknown> | undefined;
+    const send = inspector.send.bind(inspector) as (...args: unknown[]) => Promise<unknown>;
+    Object.assign(inspector, {
+      send: (method: string, ...rest: unknown[]) => {
+        if (held) return held.then(() => send(method, ...rest));
+        const sent = send(method, ...rest);
+        if (method === 'Debugger.setBreakpointByUrl') {
+          queueMicrotask(() => {
+            abort.abort(new ActionError('interrupted by SIGINT'));
+          });
+        }
+        if (method === 'Debugger.resume') {
+          held = sent
+            .catch(() => undefined)
+            .then(() => {
+              child.send('increment');
+              return Promise.race([
+                inspector.next('Debugger.paused', AbortSignal.timeout(3000)),
+                answer,
+              ]);
+            });
+        }
+        return sent;
+      },
+    });
+    await expect(
+      pauseAt(inspector, request(5, { signal: abort.signal, cleanupMs: 500 }), never),
+    ).rejects.toThrow(/^interrupted by SIGINT$/);
     expect((await answer)[0]).toBe(2);
     expect(await increment(child)).toBe(4);
   });
