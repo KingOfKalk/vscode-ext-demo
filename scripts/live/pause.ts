@@ -123,6 +123,7 @@ export async function pauseAt<T>(
     }),
   ];
   let breakpointId: string | undefined;
+  let setting: Promise<Debugger.SetBreakpointByUrlReturnType> | undefined;
   /** The process was not paused when this debugger came, so every pause is to be continued. */
   let checked = false;
   let trigger: Promise<string> | undefined;
@@ -147,11 +148,12 @@ export async function pauseAt<T>(
       );
     }
     checked = true;
-    const set = await inspector.send('Debugger.setBreakpointByUrl', {
+    setting = inspector.send('Debugger.setBreakpointByUrl', {
       url: request.url,
       lineNumber: request.position.line,
       columnNumber: request.position.column,
     });
+    const set = await setting;
     breakpointId = set.breakpointId;
     signal.throwIfAborted();
     const [location] = set.locations;
@@ -194,19 +196,33 @@ export async function pauseAt<T>(
   };
 
   /**
-   * Sends everything at once, and only then waits: a process that is blocked takes it when it can, in
-   * this order, also if nobody waits for it any more. It also continues a pause that is not at the
-   * breakpoint: it came after this debugger, perhaps because of it.
+   * Waits for the ID of a breakpoint that is on its way, then sends everything at once, and only then
+   * waits: a process that is blocked takes it when it can, in this order, also if nobody waits for it
+   * any more. It also continues a pause that is not at the breakpoint: it came after this debugger,
+   * perhaps because of it.
    */
   const release = async (): Promise<void> => {
     // Refused if nothing is paused, or if the debugger is not enabled yet.
     const unlessRefused = (error: unknown) => {
       if (!(error instanceof InspectorError)) throw error;
     };
+    if (breakpointId === undefined && setting) {
+      // Interrupted before the breakpoint had an answer. It is removed before the process continues:
+      // V8 keeps it active while another debugger is attached, and a hit after the continue would
+      // leave the process paused.
+      const limit = timeLimit(cleanupMs, () => new Error('no answer'));
+      try {
+        breakpointId = (await Promise.race([setting, limit.over])).breakpointId;
+      } catch {
+        // Not set, or no answer yet: the process takes what follows after it.
+      } finally {
+        limit.stop();
+      }
+    }
     const answers: Promise<unknown>[] = [];
     const inactive = { active: false };
     if (checked) {
-      // For a breakpoint whose ID is still on its way.
+      // For a breakpoint whose ID did not come: works only if no other debugger is attached.
       answers.push(
         inspector.send('Debugger.setBreakpointsActive', inactive, cleanupMs).catch(unlessRefused),
       );
